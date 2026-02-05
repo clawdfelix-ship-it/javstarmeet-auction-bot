@@ -572,6 +572,7 @@ async def main():
 
     # 啟動 Bot
     # 使用 drop_pending_updates 防止舊消息干擾
+    await application.initialize()
     await application.bot.delete_webhook(drop_pending_updates=True)
     await application.start()
     await application.updater.start_polling()
