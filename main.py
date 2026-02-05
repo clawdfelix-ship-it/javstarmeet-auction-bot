@@ -443,12 +443,32 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "🔧 <b>管理員選單</b>\n\n"
         "📦 <b>/new_auction</b> - 上架新拍賣\n"
+        "🛑 <b>/force_end</b> - 強制結束當前拍賣\n"
         "📊 <b>/export</b> - 導出 CSV (用戶/訂單)\n"
         "🚫 <b>/ban &lt;ID&gt;</b> - 封鎖用戶\n"
         "✅ <b>/unban &lt;ID&gt;</b> - 解封用戶\n"
         "ℹ️ <b>Bot Info</b> - 查看狀態"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+async def force_end_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id not in ADMIN_IDS:
+        return
+
+    if not current_auction["active"]:
+        await update.message.reply_text("❌ 當前沒有進行中的拍賣。")
+        return
+
+    # Cancel timer task if running
+    if current_auction["timer_task"]:
+        current_auction["timer_task"].cancel()
+        current_auction["timer_task"] = None
+    
+    # Manually trigger end
+    await end_auction(context.bot)
+    await update.message.reply_text("✅ 已強制結束拍賣。")
+
 
 async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
