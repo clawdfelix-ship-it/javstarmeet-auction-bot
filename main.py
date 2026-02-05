@@ -2,6 +2,7 @@ import logging
 import os
 import json
 import asyncio
+import html
 import pandas as pd
 from datetime import datetime
 from typing import Dict, Optional, List
@@ -124,27 +125,28 @@ async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     
     await update.message.reply_text(
-        "👋 歡迎來到極速拍賣機器人！\n為了確保交易順利，請先完成簡單的登記。\n\n請輸入您的 **稱呼 (Name)**：",
-        parse_mode=ParseMode.MARKDOWN
+        "👋 歡迎來到極速拍賣機器人！\n為了確保交易順利，請先完成簡單的登記。\n\n請輸入您的 <b>稱呼 (Name)</b>：",
+        parse_mode=ParseMode.HTML
     )
     return NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['reg_name'] = update.message.text
-    await update.message.reply_text("收到。請輸入您的 **電話號碼 (Phone)**：")
+    await update.message.reply_text("收到。請輸入您的 <b>電話號碼 (Phone)</b>：", parse_mode=ParseMode.HTML)
     return PHONE
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['reg_phone'] = update.message.text
-    await update.message.reply_text("收到。請輸入您的 **Email**：")
+    await update.message.reply_text("收到。請輸入您的 <b>Email</b>：", parse_mode=ParseMode.HTML)
     return EMAIL
 
 async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['reg_email'] = update.message.text
     keyboard = [['銅鑼灣', '旺角'], ['尖沙咀', '郵寄']]
     await update.message.reply_text(
-        "最後一步，請選擇預設 **交收地點**：",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        "最後一步，請選擇預設 <b>交收地點</b>：",
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True),
+        parse_mode=ParseMode.HTML
     )
     return PICKUP
 
@@ -185,18 +187,18 @@ async def new_auction_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ 權限不足")
         return ConversationHandler.END
     
-    await update.message.reply_text("請發送拍賣品的 **圖片**：")
+    await update.message.reply_text("請發送拍賣品的 <b>圖片</b>：", parse_mode=ParseMode.HTML)
     return WAITING_PHOTO
 
 async def get_auction_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1]
     context.user_data['auc_photo'] = photo.file_id
-    await update.message.reply_text("收到圖片。請輸入 **商品標題/描述**：")
+    await update.message.reply_text("收到圖片。請輸入 <b>商品標題/描述</b>：", parse_mode=ParseMode.HTML)
     return WAITING_TITLE
 
 async def get_auction_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['auc_title'] = update.message.text
-    await update.message.reply_text("請輸入 **起標價** (純數字)：")
+    await update.message.reply_text("請輸入 <b>起標價</b> (純數字)：", parse_mode=ParseMode.HTML)
     return WAITING_PRICE
 
 async def get_auction_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -210,12 +212,13 @@ async def get_auction_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 確認上架
     photo_id = context.user_data['auc_photo']
     title = context.user_data['auc_title']
+    safe_title = html.escape(title)
     
     keyboard = [[InlineKeyboardButton("🚀 立即開始拍賣", callback_data="start_auction_confirm")]]
     await update.message.reply_photo(
         photo=photo_id,
-        caption=f"📝 **預覽上架**\n\n📦 商品：{title}\n💰 起標：${price}",
-        parse_mode=ParseMode.MARKDOWN,
+        caption=f"📝 <b>預覽上架</b>\n\n📦 商品：{safe_title}\n💰 起標：${price}",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return ConversationHandler.END # 這裡結束對話，後續通過按鈕觸發
@@ -282,7 +285,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
         photo=photo_id,
         caption=text,
         reply_markup=keyboard,
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=ParseMode.HTML
     )
     current_auction["message_id"] = msg.message_id
     
@@ -291,7 +294,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
 
 def generate_auction_text(seconds_left):
     price = current_auction["current_price"]
-    leader = current_auction["highest_bidder_name"]
+    leader = html.escape(current_auction["highest_bidder_name"])
     # 隱藏名字中間 (例如 T**m)
     if len(leader) > 2:
         leader_display = f"{leader[0]}**{leader[-1]}"
@@ -300,12 +303,14 @@ def generate_auction_text(seconds_left):
     else:
         leader_display = "等待出價..."
         
+    title = html.escape(current_auction['title'])
+    
     return (
-        f"🔥 **極速拍賣開始！** 🔥\n\n"
-        f"📦 **{current_auction['title']}**\n"
-        f"💰 當前價格：**${price}**\n"
+        f"🔥 <b>極速拍賣開始！</b> 🔥\n\n"
+        f"📦 <b>{title}</b>\n"
+        f"💰 當前價格：<b>${price}</b>\n"
         f"👑 最高出價：{leader_display}\n\n"
-        f"⏳ **剩餘時間：{int(seconds_left)} 秒**\n"
+        f"⏳ <b>剩餘時間：{int(seconds_left)} 秒</b>\n"
         f"⚠️ 倒數 3 秒內出價自動延長 3 秒！"
     )
 
@@ -342,7 +347,7 @@ async def auction_timer_loop(bot):
                     message_id=current_auction["message_id"],
                     caption=generate_auction_text(remaining),
                     reply_markup=generate_bid_keyboard(current_auction["current_price"]),
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.HTML
                 )
                 last_update_time = now
             except Exception as e:
@@ -381,23 +386,23 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- 拍賣規則 & Menu ---
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "📜 **拍賣規則 & 使用指南**\n\n"
-        "1️⃣ **參與資格**：首次使用需完成簡單登記 (稱呼、電話、交收地點)。\n"
-        "2️⃣ **出價方式**：\n"
+        "📜 <b>拍賣規則 & 使用指南</b>\n\n"
+        "1️⃣ <b>參與資格</b>：首次使用需完成簡單登記 (稱呼、電話、交收地點)。\n"
+        "2️⃣ <b>出價方式</b>：\n"
         "   • 點擊拍賣訊息下方的快捷按鈕 (例如 +$10)。\n"
         "   • 直接在群組輸入數字 (例如 1500) 進行出價。\n"
-        "3️⃣ **拍賣時限**：\n"
+        "3️⃣ <b>拍賣時限</b>：\n"
         "   • 每場拍賣預設 25 秒倒數。\n"
-        "   • **防狙擊機制**：若在最後 3 秒內有人出價，時間自動延長 3 秒。\n"
-        "4️⃣ **得標與結算**：\n"
+        "   • <b>防狙擊機制</b>：若在最後 3 秒內有人出價，時間自動延長 3 秒。\n"
+        "4️⃣ <b>得標與結算</b>：\n"
         "   • 拍賣結束後，系統會私訊得標者付款連結。\n"
         "   • 請於得標後盡快完成付款並上傳截圖。\n"
-        "5️⃣ **注意事項**：\n"
+        "5️⃣ <b>注意事項</b>：\n"
         "   • 棄標者將被列入黑名單，無法參與未來拍賣。\n"
         "   • 管理員擁有最終解釋權。\n\n"
         "如有疑問，請聯繫管理員。"
     )
-    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
 async def user_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -407,14 +412,14 @@ async def user_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     info = store.data["users"][str(user.id)]
     text = (
-        "👤 **我的資料**\n\n"
-        f"稱呼：{info.get('name')}\n"
-        f"電話：{info.get('phone')}\n"
-        f"Email：{info.get('email')}\n"
-        f"交收地點：{info.get('pickup')}\n\n"
+        "👤 <b>我的資料</b>\n\n"
+        f"稱呼：{html.escape(info.get('name', ''))}\n"
+        f"電話：{html.escape(info.get('phone', ''))}\n"
+        f"Email：{html.escape(info.get('email', ''))}\n"
+        f"交收地點：{html.escape(info.get('pickup', ''))}\n\n"
         "如需修改資料，請聯繫管理員。"
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -422,14 +427,14 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = (
-        "🔧 **管理員選單**\n\n"
-        "📦 **/new_auction** - 上架新拍賣\n"
-        "📊 **/export** - 導出 CSV (用戶/訂單)\n"
-        "🚫 **/ban <ID>** - 封鎖用戶\n"
-        "✅ **/unban <ID>** - 解封用戶\n"
-        "ℹ️ **Bot Info** - 查看狀態"
+        "🔧 <b>管理員選單</b>\n\n"
+        "📦 <b>/new_auction</b> - 上架新拍賣\n"
+        "📊 <b>/export</b> - 導出 CSV (用戶/訂單)\n"
+        "🚫 <b>/ban &lt;ID&gt;</b> - 封鎖用戶\n"
+        "✅ <b>/unban &lt;ID&gt;</b> - 解封用戶\n"
+        "ℹ️ <b>Bot Info</b> - 查看狀態"
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -515,10 +520,10 @@ async def end_auction(bot):
     
     # 停止更新
     final_text = (
-        f"🛑 **拍賣結束！** 🛑\n\n"
-        f"📦 {title}\n"
-        f"💰 最終成交價：**${price}**\n"
-        f"🏆 得標者：{current_auction['highest_bidder_name']}\n\n"
+        f"🛑 <b>拍賣結束！</b> 🛑\n\n"
+        f"📦 {html.escape(title)}\n"
+        f"💰 最終成交價：<b>${price}</b>\n"
+        f"🏆 得標者：{html.escape(current_auction['highest_bidder_name'])}\n\n"
         f"系統將自動發送結算連結給得標者。"
     )
     
@@ -527,7 +532,7 @@ async def end_auction(bot):
         message_id=current_auction["message_id"],
         caption=final_text,
         reply_markup=None,
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=ParseMode.HTML
     )
     
     if winner_id:
@@ -547,12 +552,12 @@ async def end_auction(bot):
             user_info = store.data["users"].get(str(winner_id))
             pay_link = f"https://payme.hsbc/sample/{price}" # 示例連結
             msg = (
-                f"🎉 恭喜您標得 **{title}**！\n\n"
+                f"🎉 恭喜您標得 <b>{html.escape(title)}</b>！\n\n"
                 f"金額：${price}\n"
-                f"交收：{user_info.get('pickup', '未定')}\n\n"
+                f"交收：{html.escape(user_info.get('pickup', '未定'))}\n\n"
                 f"請點擊以下連結付款，並回傳截圖：\n{pay_link}"
             )
-            await bot.send_message(chat_id=winner_id, text=msg)
+            await bot.send_message(chat_id=winner_id, text=msg, parse_mode=ParseMode.HTML)
         except Exception as e:
             logger.error(f"Failed to DM winner: {e}")
             await bot.send_message(
