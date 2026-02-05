@@ -108,8 +108,19 @@ current_auction = {
 # --- 註冊流程 ---
 async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    
+    # 定義快捷選單
+    menu_keyboard = [['📜 拍賣規則', '👤 我的資料'], ['❓ 常見問題']]
+    if user.id in ADMIN_IDS:
+        menu_keyboard.append(['🔧 管理員選單'])
+    
+    reply_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
+
     if store.is_registered(user.id):
-        await update.message.reply_text("✅ 您已經註冊過了，可以直接參與競拍！")
+        await update.message.reply_text(
+            "✅ 您已經註冊過了，可以直接參與競拍！\n您可以點擊下方按鈕查看規則或個人資料。",
+            reply_markup=reply_markup
+        )
         return ConversationHandler.END
     
     await update.message.reply_text(
@@ -152,9 +163,14 @@ async def get_pickup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     store.register_user(user.id, info)
     
+    # 定義快捷選單
+    menu_keyboard = [['📜 拍賣規則', '👤 我的資料'], ['❓ 常見問題']]
+    if user.id in ADMIN_IDS:
+        menu_keyboard.append(['🔧 管理員選單'])
+        
     await update.message.reply_text(
         "🎉 註冊成功！您現在可以參與競拍了。",
-        reply_markup=ReplyKeyboardRemove()
+        reply_markup=ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
     )
     return ConversationHandler.END
 
@@ -362,6 +378,74 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await process_bid(user, new_price, query)
 
+# --- 拍賣規則 & Menu ---
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "📜 **拍賣規則 & 使用指南**\n\n"
+        "1️⃣ **參與資格**：首次使用需完成簡單登記 (稱呼、電話、交收地點)。\n"
+        "2️⃣ **出價方式**：\n"
+        "   • 點擊拍賣訊息下方的快捷按鈕 (例如 +$10)。\n"
+        "   • 直接在群組輸入數字 (例如 1500) 進行出價。\n"
+        "3️⃣ **拍賣時限**：\n"
+        "   • 每場拍賣預設 25 秒倒數。\n"
+        "   • **防狙擊機制**：若在最後 3 秒內有人出價，時間自動延長 3 秒。\n"
+        "4️⃣ **得標與結算**：\n"
+        "   • 拍賣結束後，系統會私訊得標者付款連結。\n"
+        "   • 請於得標後盡快完成付款並上傳截圖。\n"
+        "5️⃣ **注意事項**：\n"
+        "   • 棄標者將被列入黑名單，無法參與未來拍賣。\n"
+        "   • 管理員擁有最終解釋權。\n\n"
+        "如有疑問，請聯繫管理員。"
+    )
+    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+
+async def user_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not store.is_registered(user.id):
+        await update.message.reply_text("❌ 您尚未註冊。請輸入 /start 進行註冊。")
+        return
+        
+    info = store.data["users"][str(user.id)]
+    text = (
+        "👤 **我的資料**\n\n"
+        f"稱呼：{info.get('name')}\n"
+        f"電話：{info.get('phone')}\n"
+        f"Email：{info.get('email')}\n"
+        f"交收地點：{info.get('pickup')}\n\n"
+        "如需修改資料，請聯繫管理員。"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id not in ADMIN_IDS:
+        return
+
+    text = (
+        "🔧 **管理員選單**\n\n"
+        "📦 **/new_auction** - 上架新拍賣\n"
+        "📊 **/export** - 導出 CSV (用戶/訂單)\n"
+        "🚫 **/ban <ID>** - 封鎖用戶\n"
+        "✅ **/unban <ID>** - 解封用戶\n"
+        "ℹ️ **Bot Info** - 查看狀態"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == "📜 拍賣規則":
+        await help_command(update, context)
+    elif text == "👤 我的資料":
+        await user_info_command(update, context)
+    elif text == "❓ 常見問題":
+         await update.message.reply_text("常見問題功能建設中...")
+    elif text == "🔧 管理員選單":
+        await admin_menu(update, context)
+    else:
+        # 如果不是按鈕文字，且是數字，可能是出價
+        if current_auction["active"] and text.isdigit():
+            await handle_text_bid(update, context)
+
 async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not current_auction["active"] or not msg.text:
@@ -565,14 +649,27 @@ async def main():
     application.add_handler(auction_handler)
     application.add_handler(CallbackQueryHandler(start_auction_action, pattern="^start_auction_confirm$"))
     application.add_handler(CallbackQueryHandler(handle_bid_button, pattern="^bid_"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_bid))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_text))
     application.add_handler(CommandHandler("export", export_data))
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("admin", admin_menu))
 
     # 啟動 Bot
     # 使用 drop_pending_updates 防止舊消息干擾
     await application.initialize()
+
+    # 設定 Bot 命令選單
+    from telegram import BotCommand
+    commands = [
+        BotCommand("start", "開始 / 註冊"),
+        BotCommand("help", "拍賣規則"),
+        BotCommand("new_auction", "上架拍賣 (Admin)"),
+        BotCommand("admin", "管理選單 (Admin)"),
+    ]
+    await application.bot.set_my_commands(commands)
+
     await application.bot.delete_webhook(drop_pending_updates=True)
     await application.start()
     await application.updater.start_polling()
