@@ -49,7 +49,8 @@ class Store:
             "users": {},      # {user_id: {name, phone, email, pickup}}
             "blacklist": [],  # [user_id, ...]
             "auctions": [],   # 歷史記錄
-            "orders": []      # 訂單記錄
+            "orders": [],      # 訂單記錄
+            "config": {}      # 系統設定 (例如 group_id)
         }
         self.load()
 
@@ -268,13 +269,17 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     current_auction["start_time"] = datetime.now()
     current_auction["end_time"] = datetime.now().timestamp() + 25 # 25秒倒數
     
-    # 發送到當前群組 (假設 admin 在群組操作，或者 admin 在私聊操作但指定了群組？)
-    # 這裡假設 admin 在私聊操作，我們需要一個 target chat id。
-    # 為了簡化，我們假設 admin 在群組裡發送 /new_auction 指令。
-    # 如果 admin 在私聊，我們需要配置 GROUP_ID。
-    target_chat_id = update.effective_chat.id 
-    # 如果這是私聊，可能需要指定群組。暫時設為當前對話。
+    # 獲取目標群組 ID
+    target_chat_id = store.data.get("config", {}).get("group_id")
     
+    # 如果未設定，或者這是在群組內直接操作 (fallback)
+    if not target_chat_id:
+        if update.effective_chat.type in ["group", "supergroup"]:
+            target_chat_id = update.effective_chat.id
+        else:
+            await query.edit_message_caption("❌ 尚未設定拍賣群組！\n請先在目標群組輸入 /set_group，或在該群組內直接操作。")
+            return
+            
     current_auction["chat_id"] = target_chat_id
 
     text = generate_auction_text(25)
@@ -608,6 +613,23 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (IndexError, ValueError):
         await update.message.reply_text("用法: /unban <user_id>")
 
+async def set_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id not in ADMIN_IDS: return
+    
+    chat = update.effective_chat
+    if chat.type == "private":
+        await update.message.reply_text("❌ 請在群組中使用此指令！")
+        return
+        
+    if "config" not in store.data:
+        store.data["config"] = {}
+        
+    store.data["config"]["group_id"] = chat.id
+    store.save()
+    
+    await update.message.reply_text(f"✅ 已將此群組設定為拍賣場地！\nChat ID: {chat.id}")
+
 # --- Zeabur Health Check (Dummy Web Server) ---
 from aiohttp import web
 
@@ -662,6 +684,7 @@ async def main():
     application.add_handler(CommandHandler("export", export_data))
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
+    application.add_handler(CommandHandler("set_group", set_group_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("admin", admin_menu))
 
