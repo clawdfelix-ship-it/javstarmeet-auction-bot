@@ -43,8 +43,13 @@ WAITING_PHOTO, WAITING_TITLE, WAITING_PRICE = range(4, 7)
 
 # 數據存儲類
 class Store:
-    def __init__(self, db_file="data.json"):
-        self.db_file = db_file
+    def __init__(self, db_file=None):
+        if db_file is None:
+            # 優先使用環境變數 DATA_PATH，否則默認為 data.json
+            self.db_file = os.getenv("DATA_PATH", "data.json")
+        else:
+            self.db_file = db_file
+            
         self.data = {
             "users": {},      # {user_id: {name, phone, email, pickup}}
             "blacklist": [],  # [user_id, ...]
@@ -147,7 +152,7 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['reg_email'] = update.message.text
-    keyboard = [['銅鑼灣', '旺角'], ['尖沙咀', '郵寄']]
+    keyboard = [['旺角'], ['寄件']]
     await update.message.reply_text(
         "最後一步，請選擇預設 <b>交收地點</b>：",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True),
