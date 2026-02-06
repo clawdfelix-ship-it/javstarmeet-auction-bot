@@ -622,14 +622,59 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         "🔧 <b>管理員選單</b>\n\n"
-        "📦 <b>/new_auction</b> - 上架新拍賣\n"
-        "🛑 <b>/force_end</b> - 強制結束當前拍賣\n"
-        "📊 <b>/export</b> - 導出 CSV (用戶/訂單)\n"
-        "🚫 <b>/ban &lt;ID&gt;</b> - 封鎖用戶\n"
-        "✅ <b>/unban &lt;ID&gt;</b> - 解封用戶\n"
-        "ℹ️ <b>Bot Info</b> - 查看狀態"
+        "請選擇要執行的操作："
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    
+    keyboard = [
+        [InlineKeyboardButton("🛑 強制結束拍賣", callback_data="admin_force_end")],
+        [InlineKeyboardButton("📊 導出數據 (CSV)", callback_data="admin_export")],
+        [InlineKeyboardButton("ℹ️ 系統狀態", callback_data="admin_status")]
+    ]
+    
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    
+    if user.id not in ADMIN_IDS:
+        await query.answer("⛔ 權限不足", show_alert=True)
+        return
+
+    await query.answer()
+
+    if query.data == "admin_force_end":
+        if not current_auction["active"]:
+            await query.message.reply_text("❌ 當前沒有進行中的拍賣。")
+            return
+            
+        # Cancel timer task if running
+        if current_auction["timer_task"]:
+            current_auction["timer_task"].cancel()
+            current_auction["timer_task"] = None
+        
+        # Manually trigger end
+        await end_auction(context.bot)
+        await query.message.reply_text("✅ 已強制結束拍賣。")
+
+    elif query.data == "admin_export":
+        # Call existing export function, mocking update if needed or just ensuring it works
+        # export_data uses update.message.reply_document
+        # In callback, update.message is the message with buttons. Replying to it is fine.
+        await export_data(update, context)
+
+    elif query.data == "admin_status":
+        status = "🟢 運行中" if current_auction["active"] else "⚪ 閒置"
+        db_type = "PostgreSQL" if store.is_pg else "JSON (Local)"
+        
+        msg = (
+            f"ℹ️ <b>系統狀態</b>\n"
+            f"━━━━━━━━━━\n"
+            f"🤖 Bot 狀態: {status}\n"
+            f"💾 資料庫: {db_type}\n"
+            f"👥 註冊用戶: {len(store.get_all_users())} 人"
+        )
+        await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def force_end_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -883,6 +928,7 @@ async def main():
     application.add_handler(auction_handler)
     application.add_handler(CallbackQueryHandler(start_auction_action, pattern="^start_auction_confirm$"))
     application.add_handler(CallbackQueryHandler(handle_bid_button, pattern="^bid_"))
+    application.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_text))
     application.add_handler(CommandHandler("export", export_data))
     application.add_handler(CommandHandler("ban", ban_command))
