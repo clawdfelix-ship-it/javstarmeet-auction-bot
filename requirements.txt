@@ -4,3 +4,5 @@ pandas
 aiofiles
 openpyxl
 aiohttp
+psycopg2-binary
+

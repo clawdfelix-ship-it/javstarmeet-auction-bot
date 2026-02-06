@@ -1,65 +1,122 @@
-import logging
 import os
 import json
+import logging
 import asyncio
+import datetime
 import html
-import pandas as pd
+import random
+import csv
+import io
 from datetime import datetime
-from typing import Dict, Optional, List
-from dotenv import load_dotenv
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
-)
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler, 
-    ContextTypes, ConversationHandler, filters
-)
+
+# Telegram
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.constants import ParseMode
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    ConversationHandler,
+    filters,
+)
 
-# 載入環境變數
-load_dotenv()
+# Database
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    psycopg2 = None
 
-# 設定日誌
+# Config
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "582328026").split(",")]
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# 環境變數配置
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
-# 確保指定管理員 ID 存在 (Hardcoded for safety)
-if 582328026 not in ADMIN_IDS:
-    ADMIN_IDS.append(582328026)
-
-PORT = int(os.getenv("PORT", 8080))
-
-# 狀態定義 (註冊流程)
+# States
 NAME, PHONE, EMAIL, PICKUP = range(4)
-
-# 狀態定義 (拍賣流程)
 WAITING_PHOTO, WAITING_TITLE, WAITING_PRICE = range(4, 7)
 
-# 數據存儲類
+# --- Store Class (Abstracts JSON / Postgres) ---
 class Store:
-    def __init__(self, db_file=None):
-        if db_file is None:
-            # 優先使用環境變數 DATA_PATH，否則默認為 data.json
-            self.db_file = os.getenv("DATA_PATH", "data.json")
+    def __init__(self):
+        self.is_pg = bool(DATABASE_URL)
+        if self.is_pg:
+            if not psycopg2:
+                logger.error("DATABASE_URL present but psycopg2 not installed.")
+                exit(1)
+            self.init_pg()
         else:
-            self.db_file = db_file
-            
-        self.data = {
-            "users": {},      # {user_id: {name, phone, email, pickup}}
-            "blacklist": [],  # [user_id, ...]
-            "auctions": [],   # 歷史記錄
-            "orders": [],      # 訂單記錄
-            "config": {}      # 系統設定 (例如 group_id)
-        }
-        self.load()
+            self.db_file = os.getenv("DATA_PATH", "data.json")
+            self.data = {
+                "users": {},
+                "blacklist": [],
+                "auctions": [],
+                "orders": [],
+                "config": {}
+            }
+            self.load_json()
 
-    def load(self):
+    def get_pg_conn(self):
+        return psycopg2.connect(DATABASE_URL)
+
+    def init_pg(self):
+        conn = self.get_pg_conn()
+        cur = conn.cursor()
+        
+        # Users
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                name TEXT,
+                phone TEXT,
+                email TEXT,
+                pickup TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Blacklist
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS blacklist (
+                user_id BIGINT PRIMARY KEY,
+                reason TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Orders
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id TEXT PRIMARY KEY,
+                user_id BIGINT,
+                item TEXT,
+                price INTEGER,
+                status TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Config
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS system_config (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        
+        conn.commit()
+        conn.close()
+        logger.info("PostgreSQL tables initialized.")
+
+    def load_json(self):
         if os.path.exists(self.db_file):
             try:
                 with open(self.db_file, "r", encoding="utf-8") as f:
@@ -67,36 +124,155 @@ class Store:
             except Exception as e:
                 logger.error(f"Failed to load data: {e}")
 
-    def save(self):
-        try:
-            with open(self.db_file, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save data: {e}")
+    def save_json(self):
+        if not self.is_pg:
+            try:
+                with open(self.db_file, "w", encoding="utf-8") as f:
+                    json.dump(self.data, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.error(f"Failed to save data: {e}")
+
+    # --- User Methods ---
+    def register_user(self, user_id, info):
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO users (user_id, name, phone, email, pickup)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE 
+                SET name=EXCLUDED.name, phone=EXCLUDED.phone, email=EXCLUDED.email, pickup=EXCLUDED.pickup
+            """, (user_id, info['name'], info['phone'], info.get('email', ''), info['pickup']))
+            conn.commit()
+            conn.close()
+        else:
+            self.data["users"][str(user_id)] = info
+            self.save_json()
+
+    def get_user(self, user_id):
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+            user = cur.fetchone()
+            conn.close()
+            return user
+        else:
+            return self.data["users"].get(str(user_id))
 
     def is_registered(self, user_id):
-        return str(user_id) in self.data["users"]
+        return self.get_user(user_id) is not None
 
-    def register_user(self, user_id, info):
-        self.data["users"][str(user_id)] = info
-        self.save()
+    # --- Blacklist Methods ---
+    def add_blacklist(self, user_id):
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor()
+            cur.execute("INSERT INTO blacklist (user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,))
+            conn.commit()
+            conn.close()
+        else:
+            if user_id not in self.data["blacklist"]:
+                self.data["blacklist"].append(user_id)
+                self.save_json()
+
+    def remove_blacklist(self, user_id):
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM blacklist WHERE user_id = %s", (user_id,))
+            conn.commit()
+            conn.close()
+        else:
+            if user_id in self.data["blacklist"]:
+                self.data["blacklist"].remove(user_id)
+                self.save_json()
 
     def is_blacklisted(self, user_id):
-        return user_id in self.data["blacklist"]
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM blacklist WHERE user_id = %s", (user_id,))
+            exists = cur.fetchone()
+            conn.close()
+            return bool(exists)
+        else:
+            return user_id in self.data["blacklist"]
 
-    def ban_user(self, user_id):
-        if user_id not in self.data["blacklist"]:
-            self.data["blacklist"].append(user_id)
-            self.save()
-
-    def unban_user(self, user_id):
-        if user_id in self.data["blacklist"]:
-            self.data["blacklist"].remove(user_id)
-            self.save()
-
+    # --- Order Methods ---
     def add_order(self, order):
-        self.data["orders"].append(order)
-        self.save()
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO orders (order_id, user_id, item, price, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (order['order_id'], order['user_id'], order['item'], order['price'], order['status'], order['time']))
+            conn.commit()
+            conn.close()
+        else:
+            self.data["orders"].append(order)
+            self.save_json()
+
+    def get_all_orders(self):
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT * FROM orders ORDER BY created_at DESC")
+            rows = cur.fetchall()
+            conn.close()
+            # Convert back to dict format if needed or keep as is
+            return rows
+        else:
+            return self.data["orders"]
+
+    def get_all_users(self):
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT * FROM users")
+            rows = cur.fetchall()
+            conn.close()
+            return rows
+        else:
+            # Convert dict to list of dicts with user_id injected
+            users = []
+            for uid, info in self.data["users"].items():
+                u = info.copy()
+                u['user_id'] = uid
+                users.append(u)
+            return users
+
+    # --- Config Methods ---
+    def set_config(self, key, value):
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO system_config (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """, (key, str(value)))
+            conn.commit()
+            conn.close()
+        else:
+            self.data["config"][key] = value
+            self.save_json()
+
+    def get_config(self, key):
+        if self.is_pg:
+            conn = self.get_pg_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM system_config WHERE key = %s", (key,))
+            row = cur.fetchone()
+            conn.close()
+            if row:
+                # Try to cast to int if it looks like one (simple heuristic)
+                val = row[0]
+                if val.isdigit(): return int(val)
+                return val
+            return None
+        else:
+            return self.data["config"].get(key)
 
 store = Store()
 
@@ -142,47 +318,64 @@ async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['reg_name'] = update.message.text
-    await update.message.reply_text("收到。請輸入您的 <b>電話號碼 (Phone)</b>：", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("✅ 收到。請輸入您的 <b>電話號碼</b> (例如 91234567)：", parse_mode=ParseMode.HTML)
     return PHONE
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['reg_phone'] = update.message.text
-    await update.message.reply_text("收到。請輸入您的 <b>Email</b>：", parse_mode=ParseMode.HTML)
-    return EMAIL
+    # 跳過 Email，直接問交收
+    # await update.message.reply_text("✅ 收到。請輸入您的 <b>Email</b>：", parse_mode=ParseMode.HTML)
+    # return EMAIL
+    
+    # 這裡直接設定 Email 為空，跳到 Pickup
+    context.user_data['reg_email'] = ""
+    
+    keyboard = [['旺角', '寄件']]
+    await update.message.reply_text(
+        "✅ 收到。請選擇 <b>交收地點</b>：",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
+    return PICKUP
 
 async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['reg_email'] = update.message.text
-    keyboard = [['旺角'], ['寄件']]
+    keyboard = [['旺角', '寄件']]
     await update.message.reply_text(
-        "最後一步，請選擇預設 <b>交收地點</b>：",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True),
-        parse_mode=ParseMode.HTML
+        "✅ 收到。請選擇 <b>交收地點</b>：",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
     return PICKUP
 
 async def get_pickup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['reg_pickup'] = update.message.text
-    user = update.effective_user
+    pickup = update.message.text
+    if pickup not in ['旺角', '寄件']:
+        await update.message.reply_text("⚠️ 請選擇有效的選項 (旺角/寄件)。")
+        return PICKUP
+        
+    context.user_data['reg_pickup'] = pickup
     
-    # 儲存資料
+    # 保存資料
+    user = update.effective_user
     info = {
         "name": context.user_data['reg_name'],
         "phone": context.user_data['reg_phone'],
         "email": context.user_data['reg_email'],
-        "pickup": context.user_data['reg_pickup'],
-        "username": user.username,
-        "joined_at": datetime.now().isoformat()
+        "pickup": context.user_data['reg_pickup']
     }
     store.register_user(user.id, info)
     
-    # 定義快捷選單
+    # 恢復主菜單
     menu_keyboard = [['📜 拍賣規則', '👤 我的資料'], ['❓ 常見問題']]
     if user.id in ADMIN_IDS:
         menu_keyboard.append(['🔧 管理員選單'])
-        
+    reply_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
+    
     await update.message.reply_text(
-        "🎉 註冊成功！您現在可以參與競拍了。",
-        reply_markup=ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
+        "🎉 <b>註冊成功！</b>\n現在您可以參與所有拍賣活動了。",
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup
     )
     return ConversationHandler.END
 
@@ -231,7 +424,7 @@ async def get_auction_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    return ConversationHandler.END # 這裡結束對話，後續通過按鈕觸發
+    return ConversationHandler.END 
 
 # --- 拍賣核心邏輯 ---
 
@@ -239,18 +432,9 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
-    # 只有管理員可以按
     if query.from_user.id not in ADMIN_IDS:
         return
 
-    # 獲取暫存資料
-    # 注意：這裡我們需要把數據轉移到全局狀態
-    # 由於對話已結束，我們依賴 user_data 仍然保留 (通常 Context 會保留)
-    # 更好的做法是在 get_auction_price 直接保存到 global temp，或者這裡不結束 conversation
-    # 為簡化，我們假設 user_data 可用。如果不可用，我們需要調整流程。
-    # 修正：直接從 user_data 讀取可能不安全，如果 bot 重啟。
-    # 但對於簡單流程，暫且這樣。
-    
     if current_auction["active"]:
         await query.edit_message_caption("❌ 已有拍賣進行中，請先結束。")
         return
@@ -272,12 +456,10 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     current_auction["highest_bidder"] = None
     current_auction["highest_bidder_name"] = "無"
     current_auction["start_time"] = datetime.now()
-    current_auction["end_time"] = datetime.now().timestamp() + 25 # 25秒倒數
+    current_auction["end_time"] = datetime.now().timestamp() + 25 
     
-    # 獲取目標群組 ID
-    target_chat_id = store.data.get("config", {}).get("group_id")
+    target_chat_id = store.get_config("group_id")
     
-    # 如果未設定，或者這是在群組內直接操作 (fallback)
     if not target_chat_id:
         if update.effective_chat.type in ["group", "supergroup"]:
             target_chat_id = update.effective_chat.id
@@ -290,10 +472,8 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     text = generate_auction_text(25)
     keyboard = generate_bid_keyboard(price)
     
-    # 刪除預覽訊息
     await query.delete_message()
     
-    # 發送正式拍賣訊息
     msg = await context.bot.send_photo(
         chat_id=target_chat_id,
         photo=photo_id,
@@ -303,44 +483,47 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     current_auction["message_id"] = msg.message_id
     
-    # 啟動計時器
     current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(context.bot))
 
-def generate_auction_text(seconds_left):
+def generate_auction_text(remaining_seconds):
+    title = html.escape(current_auction["title"])
     price = current_auction["current_price"]
-    leader = html.escape(current_auction["highest_bidder_name"])
-    # 隱藏名字中間 (例如 T**m)
-    if len(leader) > 2:
-        leader_display = f"{leader[0]}**{leader[-1]}"
-    elif leader != "無":
-        leader_display = f"{leader[0]}**"
-    else:
-        leader_display = "等待出價..."
-        
-    title = html.escape(current_auction['title'])
+    bidder = html.escape(current_auction["highest_bidder_name"])
     
+    if remaining_seconds <= 0:
+        time_str = "00:00"
+    else:
+        mins, secs = divmod(int(remaining_seconds), 60)
+        time_str = f"{mins:02}:{secs:02}"
+        
     return (
-        f"🔥 <b>極速拍賣開始！</b> 🔥\n\n"
-        f"📦 <b>{title}</b>\n"
+        f"🔥 <b>正在拍賣：{title}</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
         f"💰 當前價格：<b>${price}</b>\n"
-        f"👑 最高出價：{leader_display}\n\n"
-        f"⏳ <b>剩餘時間：{int(seconds_left)} 秒</b>\n"
-        f"⚠️ 倒數 3 秒內出價自動延長 3 秒！"
+        f"👑 最高出價：{bidder}\n"
+        f"⏱️ 剩餘時間：<b>{time_str}</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"👇 點擊下方按鈕出價！"
     )
 
 def generate_bid_keyboard(current_price):
-    # 智能按鈕：+10, +50, +100 (根據價格動態調整可選)
-    kb = [
-        [
-            InlineKeyboardButton(f"+$10 (${current_price+10})", callback_data="bid_10"),
-            InlineKeyboardButton(f"+$20 (${current_price+20})", callback_data="bid_20"),
-        ],
-        [
-            InlineKeyboardButton(f"+$50 (${current_price+50})", callback_data="bid_50"),
-            InlineKeyboardButton(f"+$100 (${current_price+100})", callback_data="bid_100"),
-        ]
-    ]
-    return InlineKeyboardMarkup(kb)
+    # 根據當前價格動態調整加價幅度
+    if current_price < 100:
+        increments = [10, 20, 50]
+    elif current_price < 500:
+        increments = [20, 50, 100]
+    elif current_price < 1000:
+        increments = [50, 100, 200]
+    else:
+        increments = [100, 200, 500]
+        
+    buttons = []
+    row = []
+    for inc in increments:
+        row.append(InlineKeyboardButton(f"+${inc}", callback_data=f"bid_{inc}"))
+    buttons.append(row)
+    
+    return InlineKeyboardMarkup(buttons)
 
 async def auction_timer_loop(bot):
     last_update_time = 0
@@ -353,7 +536,6 @@ async def auction_timer_loop(bot):
             await end_auction(bot)
             break
             
-        # 每 2 秒更新一次顯示，避免 API 限制
         if now - last_update_time >= 2:
             try:
                 await bot.edit_message_caption(
@@ -377,21 +559,17 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ 拍賣已結束", show_alert=True)
         return
 
-    # 檢查註冊
     if not store.is_registered(user.id):
-        # 提供註冊連結
         bot_username = context.bot.username
         url = f"https://t.me/{bot_username}?start=register"
         await query.answer("⚠️ 請先點此註冊！", url=url)
         return
 
-    # 檢查黑名單
     if store.is_blacklisted(user.id):
         await query.answer("⛔ 您已被禁止參與拍賣", show_alert=True)
         return
 
-    # 解析出價
-    data = query.data # bid_10, bid_50
+    data = query.data 
     add_amount = int(data.split("_")[1])
     new_price = current_auction["current_price"] + add_amount
     
@@ -420,18 +598,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def user_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not store.is_registered(user.id):
-        await update.message.reply_text("❌ 您尚未註冊。請輸入 /start 進行註冊。")
+    info = store.get_user(user.id)
+    
+    if not info:
+        await update.message.reply_text("❌ 您尚未註冊。\n請輸入 /start 開始註冊。")
         return
         
-    info = store.data["users"][str(user.id)]
     text = (
-        "👤 <b>我的資料</b>\n\n"
-        f"稱呼：{html.escape(info.get('name', ''))}\n"
-        f"電話：{html.escape(info.get('phone', ''))}\n"
-        f"Email：{html.escape(info.get('email', ''))}\n"
-        f"交收地點：{html.escape(info.get('pickup', ''))}\n\n"
-        "如需修改資料，請聯繫管理員。"
+        f"👤 <b>我的資料</b>\n"
+        f"━━━━━━━━━━\n"
+        f"名稱：{html.escape(info['name'])}\n"
+        f"電話：{html.escape(info['phone'])}\n"
+        f"Email：{html.escape(info.get('email', '未填寫'))}\n"
+        f"交收：{html.escape(info['pickup'])}\n\n"
+        f"如需修改，請重新輸入 /start 進行登記。"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -481,7 +661,6 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🔧 管理員選單":
         await admin_menu(update, context)
     else:
-        # 如果不是按鈕文字，且是數字，可能是出價
         if current_auction["active"] and text.isdigit():
             await handle_text_bid(update, context)
 
@@ -490,35 +669,29 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not current_auction["active"] or not msg.text:
         return
         
-    # 檢查是否在拍賣群組
     if msg.chat_id != current_auction["chat_id"]:
         return
 
     text = msg.text.strip()
     if not text.isdigit():
-        return # 忽略非數字
+        return 
         
     bid_price = int(text)
     user = msg.from_user
 
-    # 檢查註冊 & 黑名單 (略，同上，但這裡不能用 query.answer，可以用 reply)
     if not store.is_registered(user.id):
-        # 這裡不回應避免刷屏，或者私聊提醒
         return 
         
     if bid_price <= current_auction["current_price"]:
-        # 出價過低，忽略
         return
 
     await process_bid(user, bid_price, None)
-    # 刪除用戶的出價訊息以保持版面清潔 (可選)
     try:
         await msg.delete()
     except:
         pass
 
 async def process_bid(user, price, query=None):
-    # 再次檢查價格 (防止併發)
     if price <= current_auction["current_price"]:
         if query: await query.answer("❌ 出價已被超越", show_alert=True)
         return
@@ -527,7 +700,6 @@ async def process_bid(user, price, query=None):
     current_auction["highest_bidder"] = user.id
     current_auction["highest_bidder_name"] = user.first_name
     
-    # 延長時間邏輯
     now = datetime.now().timestamp()
     remaining = current_auction["end_time"] - now
     if remaining < 3:
@@ -539,11 +711,6 @@ async def process_bid(user, price, query=None):
     if query:
         await query.answer(f"✅ 出價成功！當前 ${price}")
     
-    # 立即更新介面 (為了即時性)
-    # 注意：如果 timer 也在更新，這裡可能會衝突，但 Telegram API 會處理順序
-    # 為減少請求，這裡可以只更新變數，讓 timer loop 處理更新
-    # 但為了"極速"體驗，有人出價時應該立即反饋
-    # 我們讓 timer loop 負責主要倒數，這裡觸發一次強制更新
     pass 
 
 async def end_auction(bot):
@@ -552,7 +719,6 @@ async def end_auction(bot):
     price = current_auction["current_price"]
     title = current_auction["title"]
     
-    # 停止更新
     final_text = (
         f"🛑 <b>拍賣結束！</b> 🛑\n\n"
         f"📦 {html.escape(title)}\n"
@@ -570,7 +736,6 @@ async def end_auction(bot):
     )
     
     if winner_id:
-        # 記錄訂單
         order = {
             "order_id": f"ORD-{int(datetime.now().timestamp())}",
             "user_id": winner_id,
@@ -581,10 +746,9 @@ async def end_auction(bot):
         }
         store.add_order(order)
         
-        # 私聊得標者
         try:
-            user_info = store.data["users"].get(str(winner_id))
-            pay_link = f"https://payme.hsbc/sample/{price}" # 示例連結
+            user_info = store.get_user(winner_id)
+            pay_link = f"https://payme.hsbc/sample/{price}" 
             msg = (
                 f"🎉 恭喜您標得 <b>{html.escape(title)}</b>！\n\n"
                 f"金額：${price}\n"
@@ -599,77 +763,91 @@ async def end_auction(bot):
                 text=f"⚠️ 無法私聊得標者 (ID: {winner_id})，請主動聯繫管理員。"
             )
 
-# --- CSV 導出 ---
+# --- CSV Export & Blacklist ---
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id not in ADMIN_IDS:
         return
 
-    # 導出 Users
-    users_df = pd.DataFrame.from_dict(store.data["users"], orient='index')
-    users_df.to_csv("users.csv", index=True, index_label="user_id")
+    # Export Users
+    users = store.get_all_users()
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow(['user_id', 'name', 'phone', 'email', 'pickup'])
     
-    # 導出 Orders
-    orders_df = pd.DataFrame(store.data["orders"])
-    orders_df.to_csv("orders.csv", index=False)
+    for u in users:
+        # Check if u is dict (RealDictRow) or simple dict
+        uid = u.get('user_id')
+        name = u.get('name')
+        phone = u.get('phone')
+        email = u.get('email')
+        pickup = u.get('pickup')
+        cw.writerow([uid, name, phone, email, pickup])
+        
+    si.seek(0)
+    await update.message.reply_document(
+        document=io.BytesIO(si.getvalue().encode('utf-8-sig')),
+        filename="users.csv",
+        caption="📊 用戶名單"
+    )
     
-    await update.message.reply_document(document=open("users.csv", "rb"), filename="users.csv")
-    await update.message.reply_document(document=open("orders.csv", "rb"), filename="orders.csv")
+    # Export Orders
+    orders = store.get_all_orders()
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow(['order_id', 'user_id', 'item', 'price', 'status', 'time'])
+    for o in orders:
+        cw.writerow([o['order_id'], o['user_id'], o['item'], o['price'], o['status'], o.get('time', o.get('created_at'))])
+        
+    si.seek(0)
+    await update.message.reply_document(
+        document=io.BytesIO(si.getvalue().encode('utf-8-sig')),
+        filename="orders.csv",
+        caption="📊 訂單記錄"
+    )
 
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id not in ADMIN_IDS: return
-    
+    if update.effective_user.id not in ADMIN_IDS: return
     try:
         target_id = int(context.args[0])
-        store.ban_user(target_id)
-        await update.message.reply_text(f"🚫 已封鎖用戶 ID: {target_id}")
-    except (IndexError, ValueError):
+        store.add_blacklist(target_id)
+        await update.message.reply_text(f"🚫 已封鎖用戶 {target_id}")
+    except:
         await update.message.reply_text("用法: /ban <user_id>")
 
 async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id not in ADMIN_IDS: return
-    
+    if update.effective_user.id not in ADMIN_IDS: return
     try:
         target_id = int(context.args[0])
-        store.unban_user(target_id)
-        await update.message.reply_text(f"✅ 已解封用戶 ID: {target_id}")
-    except (IndexError, ValueError):
+        store.remove_blacklist(target_id)
+        await update.message.reply_text(f"✅ 已解封用戶 {target_id}")
+    except:
         await update.message.reply_text("用法: /unban <user_id>")
 
 async def set_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id not in ADMIN_IDS: return
+    if update.effective_user.id not in ADMIN_IDS: return
     
-    chat = update.effective_chat
-    if chat.type == "private":
-        await update.message.reply_text("❌ 請在群組中使用此指令！")
+    chat_id = update.effective_chat.id
+    if update.effective_chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 請在群組內使用此指令。")
         return
         
-    if "config" not in store.data:
-        store.data["config"] = {}
-        
-    store.data["config"]["group_id"] = chat.id
-    store.save()
-    
-    await update.message.reply_text(f"✅ 已將此群組設定為拍賣場地！\nChat ID: {chat.id}")
+    store.set_config("group_id", chat_id)
+    await update.message.reply_text(f"✅ 已將此群組 ({chat_id}) 設定為拍賣群組。")
 
-# --- Zeabur Health Check (Dummy Web Server) ---
-from aiohttp import web
-
-async def health_check(request):
-    return web.Response(text="OK")
+# --- Web Server (Zeabur Requirement) ---
+async def web_handler(request):
+    return aiohttp.web.Response(text="Bot is running")
 
 async def run_web_server():
-    app = web.Application()
-    app.router.add_get('/', health_check)
-    app.router.add_get('/health', health_check)
-    runner = web.AppRunner(app)
+    app = aiohttp.web.Application()
+    app.router.add_get('/', web_handler)
+    app.router.add_get('/health', web_handler)
+    runner = aiohttp.web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    site = aiohttp.web.TCPSite(runner, '0.0.0.0', 8080)
     await site.start()
-    logger.info(f"Web server started on port {PORT}")
+    logger.info("Web server started on port 8080")
 
 # --- 主程式 ---
 async def main():
@@ -712,6 +890,7 @@ async def main():
     application.add_handler(CommandHandler("set_group", set_group_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("admin", admin_menu))
+    application.add_handler(CommandHandler("force_end", force_end_command)) # Added command handler explicitly
 
     # 啟動 Bot
     # 使用 drop_pending_updates 防止舊消息干擾
@@ -736,6 +915,8 @@ async def main():
     await stop_signal.wait()
 
 if __name__ == "__main__":
+    import aiohttp.web # Import here to avoid circular or top-level issues if not installed
+    
     if not TOKEN:
         logger.error("Error: BOT_TOKEN is not set in environment variables.")
         exit(1)
