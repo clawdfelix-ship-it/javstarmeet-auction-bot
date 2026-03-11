@@ -5,4 +5,4 @@ aiofiles
 openpyxl
 aiohttp
 psycopg2-binary
-
+asyncpg
