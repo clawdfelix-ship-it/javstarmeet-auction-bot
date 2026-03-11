@@ -1720,7 +1720,9 @@ async def process_bid(user, price, query=None, bot=None):
 
     now = datetime.now().timestamp()
     remaining = current_auction["end_time"] - now
-    if remaining < 3:
+    
+    # 優化：最後 5 秒內出價即延長 (原為 3 秒)
+    if remaining < 5:
         current_auction["end_time"] += 5 # 延遲 5 秒
         extended = True
     else:
@@ -1733,34 +1735,30 @@ async def process_bid(user, price, query=None, bot=None):
     if "update_event" in current_auction:
         current_auction["update_event"].set() 
         
-    # Notify previous bidder
+    # Notify previous bidder (Async task to avoid blocking)
     if previous_bidder_id and previous_bidder_id != user.id:
-        try:
-            target_bot = bot if bot else (query.bot if query else None)
+        asyncio.create_task(notify_previous_bidder(bot, query, previous_bidder_id, price, user.first_name))
+
+async def notify_previous_bidder(bot, query, previous_bidder_id, price, new_bidder_name):
+    try:
+        target_bot = bot if bot else (query.bot if query else None)
+        
+        if target_bot:
+            notify_text = (
+                f"⚠️ <b>您的出價已被超越！</b>\n\n"
+                f"📦 商品：{html.escape(current_auction['title'])}\n"
+                f"💰 當前價格：<b>${price}</b>\n"
+                f"👑 最高出價者：{html.escape(new_bidder_name)}\n\n"
+                f"👇 點擊下方按鈕立即反擊！"
+            )
             
-            if target_bot:
-                notify_text = (
-                    f"⚠️ <b>您的出價已被超越！</b>\n\n"
-                    f"📦 商品：{html.escape(current_auction['title'])}\n"
-                    f"💰 當前價格：<b>${price}</b>\n"
-                    f"👑 最高出價者：{html.escape(user.first_name)}\n\n"
-                    f"👇 點擊下方按鈕立即反擊！"
-                )
-                
-                # Create a simple keyboard to jump back to the auction message
-                # Note: We can't deep link to specific message easily in all clients, 
-                # but we can try to provide a link to the group message if possible,
-                # or just a "Open Group" button.
-                # Since we don't have the group link handy (unless public), we'll skip the link button for now
-                # and just send the notification.
-                
-                await target_bot.send_message(
-                    chat_id=previous_bidder_id,
-                    text=notify_text,
-                    parse_mode=ParseMode.HTML
-                )
-        except Exception as e:
-            logger.warning(f"Failed to notify outbid user {previous_bidder_id}: {e}") 
+            await target_bot.send_message(
+                chat_id=previous_bidder_id,
+                text=notify_text,
+                parse_mode=ParseMode.HTML
+            )
+    except Exception as e:
+        logger.warning(f"Failed to notify outbid user {previous_bidder_id}: {e}")
 
 async def start_next_queued_auction(bot):
     queue = await store.get_auction_queue()
