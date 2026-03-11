@@ -1,3 +1,4 @@
+# Fix deployment issue: force rebuild to remove stale email_utils dependency
 import os
 import json
 import logging
