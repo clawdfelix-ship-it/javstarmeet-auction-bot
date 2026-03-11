@@ -349,7 +349,7 @@ current_auction = {
     "message_id": None,     # 拍賣訊息 ID (群組)
     "chat_id": None,        # 群組 ID
     "timer_task": None,
-    "update_event": asyncio.Event(),
+    "update_event": None, # Will be initialized in loop
     "session_id": None,
     "session_seq": 0,
     "bot_username": None
@@ -997,6 +997,11 @@ def generate_bid_keyboard(current_price):
 async def auction_timer_loop(bot):
     last_update_time = 0
     event = current_auction["update_event"]
+    
+    # Ensure event is created if missing
+    if event is None:
+         event = asyncio.Event()
+         current_auction["update_event"] = event
     
     while True:
         try:
@@ -1739,8 +1744,14 @@ async def process_bid(user, price, query=None, bot=None):
         await query.answer(f"✅ 出價成功！您目前出價 ${price}", show_alert=False)
     
     # Trigger immediate UI update
-    if "update_event" in current_auction:
-        current_auction["update_event"].set() 
+    if current_auction.get("update_event"):
+        # Ensure thread safety or loop compatibility
+        try:
+            current_auction["update_event"].set()
+        except RuntimeError:
+             # In case of loop mismatch, we might need loop.call_soon_threadsafe
+             # But here we are likely in the same loop (Telegram bot loop)
+             pass
         
     # Notify previous bidder (Async task to avoid blocking)
     if previous_bidder_id and previous_bidder_id != user.id:
@@ -1817,7 +1828,11 @@ async def start_auction_from_queue(bot, item):
     current_auction["session_id"] = session_id
     current_auction["session_seq"] = session_seq
     current_auction["chat_id"] = target_chat_id
-    if "update_event" in current_auction:
+    
+    # Initialize event in the current loop
+    if current_auction["update_event"] is None or current_auction["update_event"]._loop != asyncio.get_running_loop():
+        current_auction["update_event"] = asyncio.Event()
+    else:
         current_auction["update_event"].clear()
 
     text = generate_auction_text(25)
