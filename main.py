@@ -705,6 +705,19 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     current_auction["session_seq"] = session_seq 
     current_auction["chat_id"] = target_chat_id
 
+    # Get bot username for deep linking
+    try:
+        me = await context.bot.get_me()
+        current_auction["bot_username"] = me.username
+    except Exception as e:
+        logger.error(f"Failed to get bot info: {e}")
+
+    # Initialize event in the current loop
+    if current_auction["update_event"] is None or current_auction["update_event"]._loop != asyncio.get_running_loop():
+        current_auction["update_event"] = asyncio.Event()
+    else:
+        current_auction["update_event"].clear()
+
     text = generate_auction_text(25)
     keyboard = generate_bid_keyboard(price)
     
