@@ -351,7 +351,8 @@ current_auction = {
     "timer_task": None,
     "update_event": asyncio.Event(),
     "session_id": None,
-    "session_seq": 0
+    "session_seq": 0,
+    "bot_username": None
 }
 
 # --- 註冊流程 ---
@@ -982,8 +983,14 @@ def generate_bid_keyboard(current_price):
     if bin_price > 0:
         buttons.append([InlineKeyboardButton(f"⚡️ 一口價 ${bin_price} 立即成交", callback_data=f"bid_bin_{bin_price}")])
     
-    # 自定義出價 (強制使用 Numpad，移除 WebApp)
-    buttons.append([InlineKeyboardButton("✍️ 自定義出價", callback_data="bid_custom")])
+    # 自定義出價 (改為 URL Button)
+    bot_username = current_auction.get("bot_username")
+    if bot_username:
+        url = f"https://t.me/{bot_username}?start=bid"
+        buttons.append([InlineKeyboardButton("📩 點擊私訊出價", url=url)])
+    else:
+        # Fallback 
+        buttons.append([InlineKeyboardButton("✍️ 自定義出價", callback_data="bid_custom")])
     
     return InlineKeyboardMarkup(buttons)
 
@@ -1788,6 +1795,13 @@ async def start_auction_from_queue(bot, item):
 
     if not photo_id or not target_chat_id:
         return
+
+    # Get bot username for deep linking
+    try:
+        me = await bot.get_me()
+        current_auction["bot_username"] = me.username
+    except Exception as e:
+        logger.error(f"Failed to get bot info: {e}")
 
     session_id, session_seq = await store.get_next_session()
     current_auction["active"] = True
