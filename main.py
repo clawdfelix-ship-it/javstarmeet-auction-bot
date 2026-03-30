@@ -347,7 +347,7 @@ current_auction = {
     "pending_price": 0,     # 暗標：待 reveal 的價格
     "pending_bidder": None, # user_id
     "pending_bidder_name": "無",
-    "bidders": set(),       # set of user_ids who have bid (one bid per item)
+    "bidders": [],          # list of {id, name, price} - all bidders with their bid amounts
     "highest_bidder": None,  # 上一個最高出價者 (for outbid notification)
     "highest_bidder_name": "無",
     "message_id": None,     # 拍賣訊息 ID (群組)
@@ -793,7 +793,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     current_auction["pending_price"] = price   # 暗標：pending = base price initially
     current_auction["pending_bidder"] = None
     current_auction["pending_bidder_name"] = "無"
-    current_auction["bidders"] = set()
+    current_auction["bidders"] = []
     current_auction["bin_price"] = bin_price
     current_auction["photo_id"] = photo_id
     current_auction["highest_bidder"] = None
@@ -1766,7 +1766,8 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_blind_bid(user, price, query=None, bot=None):
     # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
     # 每人只能出一次價，價錢任意，最後 reveal 時價高者得
-    if user.id in current_auction.get("bidders", set()):
+    existing_bids = current_auction.get("bidders", [])
+    if any(b["id"] == user.id for b in existing_bids):
         if query: await query.answer("❌ 你已經出過價了", show_alert=True)
         return
 
@@ -1774,7 +1775,7 @@ async def process_blind_bid(user, price, query=None, bot=None):
     current_auction["pending_price"] = price
     current_auction["pending_bidder"] = user.id
     current_auction["pending_bidder_name"] = user.first_name
-    current_auction["bidders"].add(user.id)
+    current_auction["bidders"].append({"id": user.id, "name": user.first_name, "price": price})
     
     # Check Buy It Now
     bin_price = current_auction.get("bin_price", 0)
@@ -1858,7 +1859,7 @@ async def start_auction_from_queue(bot, item):
     current_auction["pending_price"] = price   # 暗標：pending = base price initially
     current_auction["pending_bidder"] = None
     current_auction["pending_bidder_name"] = "無"
-    current_auction["bidders"] = set()
+    current_auction["bidders"] = []
     current_auction["bin_price"] = bin_price
     current_auction["photo_id"] = photo_id
     current_auction["highest_bidder"] = None
@@ -1902,11 +1903,26 @@ async def end_auction(bot):
     price = current_auction["current_price"]
     title = current_auction["title"]
     
+    bidders = current_auction.get("bidders", [])
+    # Sort by price descending for display
+    sorted_bidders = sorted(bidders, key=lambda x: x["price"], reverse=True)
+
+    # Build bidders list text
+    if sorted_bidders:
+        bidders_lines = "\n".join(
+            f"  {i+1}. {html.escape(b['name'])} — <b>${b['price']}</b>"
+            for i, b in enumerate(sorted_bidders)
+        )
+        bidders_text = f"\n📋 <b>投標記錄：</b>\n{bidders_lines}\n"
+    else:
+        bidders_text = "\n📋 沒有投標者"
+
     final_text = (
         f"🛑 <b>拍賣結束！</b> 🛑\n\n"
         f"📦 {html.escape(title)}\n"
         f"💰 最終成交價：<b>${price}</b>\n"
-        f"🏆 得標者：{html.escape(current_auction['highest_bidder_name'])}\n\n"
+        f"🏆 得標者：{html.escape(current_auction['highest_bidder_name'])}\n"
+        f"{bidders_text}\n"
         f"系統將自動發送結算連結給得標者。"
     )
     
