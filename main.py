@@ -1162,12 +1162,6 @@ async def handle_private_bid_text(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("❌ 拍賣已結束。")
         return ConversationHandler.END
 
-    if price <= current_auction["pending_price"]:
-        await update.message.reply_text(
-            f"❌ 出價必須高於當前最高暗標價 (${current_auction['pending_price']})。\n請重新輸入："
-        )
-        return BIDDING_PRICE
-    
     # Check registration
     if not await store.is_registered(user.id):
         await update.message.reply_text(
@@ -1763,11 +1757,6 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Optional: Prompt to register if they try to bid
         return 
         
-    if bid_price <= current_auction["pending_price"]:
-        if is_valid_reply:
-            await msg.reply_text(f"❌ 出價必須高於當前最高暗標價 (${current_auction['pending_price']}")
-        return
-
     await process_blind_bid(user, bid_price, None, context.bot)
     try:
         await msg.delete()
