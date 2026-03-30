@@ -347,6 +347,7 @@ current_auction = {
     "pending_price": 0,     # 暗標：待 reveal 的價格
     "pending_bidder": None, # user_id
     "pending_bidder_name": "無",
+    "bidders": set(),       # set of user_ids who have bid (one bid per item)
     "highest_bidder": None,  # 上一個最高出價者 (for outbid notification)
     "highest_bidder_name": "無",
     "message_id": None,     # 拍賣訊息 ID (群組)
@@ -792,6 +793,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     current_auction["pending_price"] = price   # 暗標：pending = base price initially
     current_auction["pending_bidder"] = None
     current_auction["pending_bidder_name"] = "無"
+    current_auction["bidders"] = set()
     current_auction["bin_price"] = bin_price
     current_auction["photo_id"] = photo_id
     current_auction["highest_bidder"] = None
@@ -1775,17 +1777,20 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_blind_bid(user, price, query=None, bot=None):
     # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
     # pending_price 係暗標用來校驗新舊出價，public 顯示跟 current_price
+    # Each bidder can only bid once per auction item
+    if user.id in current_auction.get("bidders", set()):
+        if query: await query.answer("❌ 你已經出過價了", show_alert=True)
+        return
+
     if price <= current_auction["pending_price"]:
         if query: await query.answer(f"❌ 出價必須高於 ${current_auction['pending_price']}", show_alert=True)
         return
-
-    # Track previous bidder for notification
-    previous_bidder_id = current_auction["pending_bidder"]
     
-    # Store as pending (not yet public)
+    # Store as pending (not yet public) and track bidder
     current_auction["pending_price"] = price
     current_auction["pending_bidder"] = user.id
     current_auction["pending_bidder_name"] = user.first_name
+    current_auction["bidders"].add(user.id)
     
     # Check Buy It Now
     bin_price = current_auction.get("bin_price", 0)
@@ -1808,12 +1813,6 @@ async def process_blind_bid(user, price, query=None, bot=None):
         current_auction["end_time"] += 5
         if current_auction.get("update_event"):
             current_auction["update_event"].set()
-    
-    # Notify previous highest bidder
-    if previous_bidder_id and previous_bidder_id != user.id:
-        target_bot = bot if bot else (query.bot if query else None)
-        if target_bot:
-            asyncio.create_task(notify_previous_bidder(target_bot, previous_bidder_id, current_auction["title"], price, user.first_name))
 
 async def notify_previous_bidder(bot, previous_bidder_id, title, new_price, new_bidder_name):
     try:
@@ -1875,6 +1874,7 @@ async def start_auction_from_queue(bot, item):
     current_auction["pending_price"] = price   # 暗標：pending = base price initially
     current_auction["pending_bidder"] = None
     current_auction["pending_bidder_name"] = "無"
+    current_auction["bidders"] = set()
     current_auction["bin_price"] = bin_price
     current_auction["photo_id"] = photo_id
     current_auction["highest_bidder"] = None
