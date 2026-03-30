@@ -377,7 +377,28 @@ async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not await store.is_registered(user.id):
                  await update.message.reply_text("⚠️ 請先完成註冊才能出價！\n請輸入您的 <b>稱呼 (Name)</b>：", parse_mode=ParseMode.HTML)
                  return NAME
-            
+
+            # Strict mode: check profile completeness
+            user_info = await store.get_user(user.id)
+            missing = []
+            if not user_info.get('name'):
+                missing.append('稱呼')
+            if not user_info.get('phone'):
+                missing.append('電話')
+            if not user_info.get('email'):
+                missing.append('Email')
+            if not user_info.get('pickup'):
+                missing.append('交收地點')
+
+            if missing:
+                await update.message.reply_text(
+                    f"⚠️ 請先補全以下資料才能出價：\n" +
+                    "\n".join(f"- {m}" for m in missing) +
+                    "\n\n請點擊 /start 更新資料",
+                    parse_mode=ParseMode.HTML
+                )
+                return ConversationHandler.END
+
             # If registered, start bidding flow
             if not current_auction["active"]:
                 await update.message.reply_text("❌ 當前沒有進行中的拍賣。")
@@ -395,6 +416,27 @@ async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not await store.is_registered(user.id):
                  await update.message.reply_text("⚠️ 請先完成註冊才能出價！\n請輸入您的 <b>稱呼 (Name)</b>：", parse_mode=ParseMode.HTML)
                  return NAME
+
+            # Strict mode: check profile completeness
+            user_info = await store.get_user(user.id)
+            missing = []
+            if not user_info.get('name'):
+                missing.append('稱呼')
+            if not user_info.get('phone'):
+                missing.append('電話')
+            if not user_info.get('email'):
+                missing.append('Email')
+            if not user_info.get('pickup'):
+                missing.append('交收地點')
+
+            if missing:
+                await update.message.reply_text(
+                    f"⚠️ 請先補全以下資料才能出價：\n" +
+                    "\n".join(f"- {m}" for m in missing) +
+                    "\n\n請點擊 /start 更新資料",
+                    parse_mode=ParseMode.HTML
+                )
+                return ConversationHandler.END
                  
             if not current_auction["active"]:
                 await update.message.reply_text("❌ 當前沒有進行中的拍賣。")
@@ -430,9 +472,48 @@ async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
     
+    # Check completeness for returning users (not editing)
+    if not is_edit and await store.is_registered(user.id):
+        user_info = await store.get_user(user.id)
+        missing = []
+        if not user_info.get('name'):
+            missing.append('稱呼')
+        if not user_info.get('phone'):
+            missing.append('電話')
+        if not user_info.get('email'):
+            missing.append('Email')
+        if not user_info.get('pickup'):
+            missing.append('交收地點')
+
+        if missing:
+            # Incomplete profile → force edit mode
+            is_edit = True
+
     msg_text = "👋 歡迎來到極速拍賣機器人！\n為了確保交易順利，請先完成簡單的登記。\n\n請輸入您的 <b>稱呼 (Name)</b>："
     if is_edit:
-        msg_text = "✏️ <b>修改資料</b>\n\n請輸入您的新 <b>稱呼 (Name)</b>："
+        # Prefill with existing values
+        existing_info = await store.get_user(user.id)
+        existing_name = existing_info.get('name', '') if existing_info else ''
+        existing_phone = existing_info.get('phone', '') if existing_info else ''
+        existing_email = existing_info.get('email', '') if existing_info else ''
+        existing_pickup = existing_info.get('pickup', '') if existing_info else ''
+
+        # Store existing values for potential use
+        context.user_data['reg_name'] = existing_name
+        context.user_data['reg_phone'] = existing_phone
+        context.user_data['reg_email'] = existing_email
+        context.user_data['reg_pickup'] = existing_pickup
+
+        prefilled_note = ""
+        if existing_name or existing_phone or existing_email or existing_pickup:
+            prefilled_note = f"\n\n📋 現有資料：\n" \
+                f"稱呼：{html.escape(existing_name) or '未填'}\n" \
+                f"電話：{html.escape(existing_phone) or '未填'}\n" \
+                f"Email：{html.escape(existing_email) or '未填'}\n" \
+                f"交收：{html.escape(existing_pickup) or '未填'}\n" \
+                f"\n直接輸入新值可更新，或回覆「skip」保留現有值"
+
+        msg_text = f"✏️ <b>補全 / 修改資料</b>{prefilled_note}\n\n請輸入您的 <b>稱呼 (Name)</b>："
 
     if update.callback_query:
          await update.callback_query.message.reply_text(msg_text, parse_mode=ParseMode.HTML)
@@ -442,33 +523,40 @@ async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['reg_name'] = update.message.text
+    text = update.message.text.strip()
+    # Support "skip" to keep existing value
+    if text.lower() == 'skip' and context.user_data.get('reg_name'):
+        pass  # keep existing
+    else:
+        context.user_data['reg_name'] = text
     await update.message.reply_text("✅ 收到。請輸入您的 <b>電話號碼</b> (例如 91234567)：", parse_mode=ParseMode.HTML)
     return PHONE
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['reg_phone'] = update.message.text
-    # 跳過 Email，直接問交收
-    # await update.message.reply_text("✅ 收到。請輸入您的 <b>Email</b>：", parse_mode=ParseMode.HTML)
-    # return EMAIL
-    
-    # 修改：現在要收集 Email
+    text = update.message.text.strip()
+    if text.lower() == 'skip' and context.user_data.get('reg_phone'):
+        pass  # keep existing
+    else:
+        context.user_data['reg_phone'] = text
     await update.message.reply_text("✅ 收到。請輸入您的 <b>Email</b> (用於得標通知)：", parse_mode=ParseMode.HTML)
     return EMAIL
-    
-    # 這裡直接設定 Email 為空，跳到 Pickup
-    # context.user_data['reg_email'] = ""
-    
-    # keyboard = [['旺角店自取']]
-    await update.message.reply_text(
-        "✅ 收到。請選擇 <b>交收地點</b>：",
-        parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-    )
-    return PICKUP
 
 async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['reg_email'] = update.message.text
+    import re
+    text = update.message.text.strip()
+    if text.lower() == 'skip' and context.user_data.get('reg_email'):
+        pass  # keep existing
+    else:
+        # Validate email format
+        email_pattern = r'^[\w\.\-]+@[\w\.\-]+\.\w+$'
+        if not re.match(email_pattern, text):
+            await update.message.reply_text(
+                "⚠️ Email 格式不正確，請重新輸入：",
+                parse_mode=ParseMode.HTML
+            )
+            return EMAIL
+        context.user_data['reg_email'] = text
+
     keyboard = [['旺角店自取']]
     await update.message.reply_text(
         "✅ 收到。請選擇 <b>交收地點</b>：",
@@ -478,12 +566,15 @@ async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return PICKUP
 
 async def get_pickup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pickup = update.message.text
-    if pickup not in ['旺角店自取']:
-        await update.message.reply_text("⚠️ 請選擇有效的選項 (旺角店自取)。")
+    text = update.message.text.strip()
+    # Support "skip" to keep existing value
+    if text.lower() == 'skip' and context.user_data.get('reg_pickup'):
+        pass  # keep existing
+    elif text in ['旺角店自取']:
+        context.user_data['reg_pickup'] = text
+    else:
+        await update.message.reply_text("⚠️ 請選擇有效的選項 (旺角店自取)，或輸入「skip」保留現有值。")
         return PICKUP
-        
-    context.user_data['reg_pickup'] = pickup
     
     # 保存資料
     user = update.effective_user
@@ -1082,7 +1173,28 @@ async def handle_private_bid_text(update: Update, context: ContextTypes.DEFAULT_
             parse_mode=ParseMode.HTML
         )
         return NAME
-        
+
+    # Check profile completeness (strict mode: all fields required)
+    user_info = await store.get_user(user.id)
+    missing = []
+    if not user_info.get('name'):
+        missing.append('稱呼')
+    if not user_info.get('phone'):
+        missing.append('電話')
+    if not user_info.get('email'):
+        missing.append('Email')
+    if not user_info.get('pickup'):
+        missing.append('交收地點')
+
+    if missing:
+        await update.message.reply_text(
+            f"⚠️ 請先補全以下資料才能出價：\n" +
+            "\n".join(f"- {m}" for m in missing) +
+            "\n\n請點擊 /start 更新資料",
+            parse_mode=ParseMode.HTML
+        )
+        return ConversationHandler.END
+
     # Process the bid (blind mode - no public price reveal until end)
     await process_blind_bid(user, price, query=None, bot=context.bot)
     await update.message.reply_text(
@@ -1121,7 +1233,26 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.answer("⚠️ 請先私訊機器人完成註冊", show_alert=True)
         return
-    
+
+    # Check profile completeness (strict mode: all fields required)
+    user_info = await store.get_user(user.id)
+    missing = []
+    if not user_info.get('name'):
+        missing.append('稱呼')
+    if not user_info.get('phone'):
+        missing.append('電話')
+    if not user_info.get('email'):
+        missing.append('Email')
+    if not user_info.get('pickup'):
+        missing.append('交收地點')
+
+    if missing:
+        await query.answer(
+            f"⚠️ 請先補全資料：{'、'.join(missing)}",
+            show_alert=True
+        )
+        return
+
     # Redirect to private chat for bidding
     bot_username = current_auction.get("bot_username") or context.bot.username
     if not bot_username:
@@ -1130,7 +1261,7 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bot_username = me.username
         except Exception:
             pass
-    
+
     if bot_username:
         url = f"https://t.me/{bot_username}?start=bid"
         await query.answer("👇 請點擊按鈕私訊出價", url=url)
