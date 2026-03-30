@@ -1776,16 +1776,11 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_blind_bid(user, price, query=None, bot=None):
     # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
-    # pending_price 係暗標用來校驗新舊出價，public 顯示跟 current_price
-    # Each bidder can only bid once per auction item
+    # 每人只能出一次價，價錢任意，最後 reveal 時價高者得
     if user.id in current_auction.get("bidders", set()):
         if query: await query.answer("❌ 你已經出過價了", show_alert=True)
         return
 
-    if price <= current_auction["pending_price"]:
-        if query: await query.answer(f"❌ 出價必須高於 ${current_auction['pending_price']}", show_alert=True)
-        return
-    
     # Store as pending (not yet public) and track bidder
     current_auction["pending_price"] = price
     current_auction["pending_bidder"] = user.id
