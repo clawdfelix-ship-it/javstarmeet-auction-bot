@@ -1775,7 +1775,7 @@ async def process_blind_bid(user, price, query=None, bot=None):
     current_auction["pending_price"] = price
     current_auction["pending_bidder"] = user.id
     current_auction["pending_bidder_name"] = user.first_name
-    current_auction["bidders"].append({"id": user.id, "name": user.first_name, "price": price})
+    current_auction["bidders"].append({"id": user.id, "name": user.first_name, "price": price, "time": datetime.now().timestamp()})
     
     # Check Buy It Now
     bin_price = current_auction.get("bin_price", 0)
@@ -1888,8 +1888,8 @@ async def start_auction_from_queue(bot, item):
 
 async def end_auction(bot):
     bidders = current_auction.get("bidders", [])
-    # Sort by price descending - highest price wins
-    sorted_bidders = sorted(bidders, key=lambda x: x["price"], reverse=True)
+    # Sort by price descending, then by time ascending (tie = earliest wins)
+    sorted_bidders = sorted(bidders, key=lambda x: (-x["price"], x.get("time", 0)))
 
     # Determine winner: highest bidder (first in sorted list)
     if sorted_bidders:
