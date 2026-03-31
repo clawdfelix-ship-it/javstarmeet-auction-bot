@@ -856,7 +856,7 @@ async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
 
     # 定義快捷選單
-    menu_keyboard = [['📜 拍賣規則', '👤 我的資料'], ['❓ 常見問題']]
+    menu_keyboard = [['📜 拍賣規則', '👤 我的資料'], ['📍 取貨地址']]
     if user.id in ADMIN_IDS:
         menu_keyboard.append(['🔧 管理員選單'])
     
@@ -984,7 +984,7 @@ async def get_pickup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await store.register_user(user.id, info)
     
     # 恢復主菜單
-    menu_keyboard = [['📜 拍賣規則', '👤 我的資料'], ['❓ 常見問題']]
+    menu_keyboard = [['📜 拍賣規則', '👤 我的資料'], ['📍 取貨地址']]
     if user.id in ADMIN_IDS:
         menu_keyboard.append(['🔧 管理員選單'])
     reply_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
@@ -1703,6 +1703,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "4️⃣ <b>注意事項</b>：\n"
         "   • 棄標者將被列入黑名單，無法參與未來拍賣。\n"
         "   • 管理員擁有最終解釋權。\n\n"
+        "📍 <b>取貨地址</b>：\n"
+        "   旺角西洋菜南街72號3樓\n"
+        "   （OK右手邊門口上）\n"
+        "   營業時間：星期一至星期六\n"
+        "   星期日休息\n\n"
         "如有疑問，請聯繫管理員。"
     )
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
@@ -2363,8 +2368,16 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await help_command(update, context)
     elif text == "👤 我的資料":
         await user_info_command(update, context)
-    elif text == "❓ 常見問題":
-         await update.message.reply_text("常見問題功能建設中...")
+    elif text == "📍 取貨地址":
+        await update.message.reply_text(
+            "📍 <b>取貨地址</b>\n\n"
+            "旺角西洋菜南街72號3樓\n"
+            "（OK右手邊門口上）\n\n"
+            "營業時間：星期一至星期六\n"
+            "星期日休息\n\n"
+            "請於得標後聯絡管理員安排取貨時間。",
+            parse_mode=ParseMode.HTML
+        )
     elif text == "🔧 管理員選單":
         await admin_menu(update, context)
     else:
