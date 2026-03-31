@@ -1777,26 +1777,69 @@ async def user_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("✏️ 修改資料", callback_data="edit_profile")]]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
 
+# --- Unified Admin Panel (Inline Keyboard) ---
+
+def build_admin_keyboard():
+    """Build the unified admin panel inline keyboard."""
+    keyboard = [
+        # 🏠 Header row (just a label, no button)
+        # 📦 Auction section
+        [
+            InlineKeyboardButton("➕ Add Single", callback_data="admin_add_single"),
+            InlineKeyboardButton("📥 Import Batch", callback_data="admin_import_batch"),
+            InlineKeyboardButton("📋 View Queue", callback_data="admin_view_queue"),
+        ],
+        # 🚀 Batch Control section
+        [
+            InlineKeyboardButton("🕐 Schedule", callback_data="admin_schedule"),
+            InlineKeyboardButton("🚀 Start", callback_data="admin_start_batch"),
+            InlineKeyboardButton("⏸ Pause", callback_data="admin_pause"),
+            InlineKeyboardButton("▶️ Resume", callback_data="admin_resume"),
+            InlineKeyboardButton("🛑 Abort", callback_data="admin_abort"),
+        ],
+        # 📊 Status section
+        [
+            InlineKeyboardButton("📊 Batch Status", callback_data="admin_batch_status"),
+            InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
+        ],
+        # ⚙️ Settings section
+        [
+            InlineKeyboardButton("📢 Set Prod Group", callback_data="admin_set_prod"),
+            InlineKeyboardButton("🧪 Set Test Group", callback_data="admin_set_test"),
+        ],
+        # 🛑 End Auction
+        [
+            InlineKeyboardButton("🛑 End Auction", callback_data="admin_end_auction"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the unified admin panel inline keyboard."""
     user = update.effective_user
     if user.id not in ADMIN_IDS:
         return
 
     text = (
-        "🔧 <b>管理員選單</b>\n\n"
-        "請選擇要執行的操作："
+        "🏠 <b>Admin Panel</b>\n\n"
+        "Select an action:"
     )
-    
-    keyboard = [
-        [InlineKeyboardButton("📦 訂單管理", callback_data="admin_order_mgmt")],
-        [InlineKeyboardButton("🛑 強制結束拍賣", callback_data="admin_force_end")],
-        [InlineKeyboardButton("🏁 當日拍賣會結束 (結算)", callback_data="admin_end_session")],
-        [InlineKeyboardButton("📊 導出數據 (CSV)", callback_data="admin_export")],
-        [InlineKeyboardButton("📋 批次拍賣控制", callback_data="admin_batch_menu")],
-        [InlineKeyboardButton("ℹ️ 系統狀態", callback_data="admin_status")]
-    ]
-    
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+
+    # Delete the command message if it's a /admin call to keep chat clean
+    try:
+        if update.message:
+            await update.message.delete()
+    except Exception:
+        pass
+
+    # Send the admin panel as a new message
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=text,
+        reply_markup=build_admin_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
 
 # --- Admin Order Management ---
 async def admin_order_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
@@ -2004,99 +2047,91 @@ async def handle_admin_order_action(update: Update, context: ContextTypes.DEFAUL
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    
+
     if user.id not in ADMIN_IDS:
         await query.answer("⛔ 權限不足", show_alert=True)
         return
 
     await query.answer()
+    data = query.data
 
-    if query.data.startswith("admin_order_mgmt"):
-        page = 1
-        parts = query.data.split("_")
-        # admin_order_mgmt (len 3) -> page 1
-        # admin_order_mgmt_2 (len 4) -> page 2
-        if len(parts) >= 4 and parts[3].isdigit():
-            page = int(parts[3])
-            
-        await admin_order_mgmt_menu(update, context, page)
+    # --- Unified Admin Panel callbacks ---
+    if data == "admin_add_single":
+        # Start the /new_auction flow (add single auction)
+        await new_auction_start(update, context)
+        return
 
-    elif query.data.startswith("adm_ord_"):
-        await handle_admin_order_action(update, context)
-
-    elif query.data == "admin_force_end":
-        if not current_auction["active"]:
-            await query.message.reply_text("❌ 當前沒有進行中的拍賣。")
-            return
-            
-        # Cancel timer task if running
-        if current_auction["timer_task"]:
-            current_auction["timer_task"].cancel()
-            current_auction["timer_task"] = None
-        
-        # Manually trigger end
-        await end_auction(context.bot)
-        await query.message.reply_text("✅ 已強制結束拍賣。")
-
-    elif query.data == "admin_end_session":
-        # Check active auction
-        if current_auction["active"]:
-             await query.message.reply_text("❌ 請先結束當前進行中的拍賣，再進行當日結算。")
-             return
-             
-        # Ask for confirmation
-        keyboard = [
-            [InlineKeyboardButton("✅ 確認結算並發送帳單", callback_data="confirm_end_session")],
-            [InlineKeyboardButton("❌ 取消", callback_data="cancel_end_session")]
-        ]
-        await query.message.reply_text(
-            "⚠️ **確認結束當日拍賣會？**\n\n這將會：\n1. 統計今日所有中標訂單\n2. 按用戶合併訂單\n3. 自動私訊發送總帳單給每位中標者\n\n此操作不可撤銷。",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+    elif data == "admin_import_batch":
+        # Show instructions for /import_batch
+        await query.message.edit_text(
+            "📥 <b>批次匯入格式：</b>\n\n"
+            "<code>標題|起標價|一口價|圖片URL</code>\n\n"
+            "範例：\n"
+            "<code>JAV-001|100|500|https://example.com/1.jpg</code>\n\n"
+            "請直接回覆此訊息，貼上您的拍賣品列表。",
             parse_mode=ParseMode.HTML
         )
-    
-    elif query.data == "confirm_end_session":
-        await process_daily_settlement(update, context)
-        
-    elif query.data == "cancel_end_session":
-        await query.message.edit_text("已取消結算操作。")
+        return
 
-    elif query.data == "admin_export":
-        # Call existing export function, mocking update if needed or just ensuring it works
-        # export_data uses update.message.reply_document
-        # In callback, update.message is the message with buttons. Replying to it is fine.
-        await export_data(update, context)
+    elif data == "admin_view_queue":
+        queue = current_auction.get("batch_queue", [])
+        if not queue:
+            await query.message.edit_text("📋 隊列是空的。使用【Import Batch】匯入拍賣品。")
+        else:
+            text = f"📋 <b>批次隊列</b>（{len(queue)} 件）\n\n"
+            for i, item in enumerate(queue, 1):
+                title = html.escape(item.get("title", "?")[:30])
+                price = item.get("price", 0)
+                text += f"{i}. {title}\n   💰 起標 ${price}\n"
+            await query.message.edit_text(text, parse_mode=ParseMode.HTML)
+        return
 
-    elif query.data == "admin_batch_menu":
-        # Redirect to the dedicated batch admin panel
-        await show_batch_admin_panel(context.bot, chat_id=query.message.chat_id)
+    elif data == "admin_schedule":
+        # Prompt for datetime - show current schedule and instructions
+        sched = current_auction.get("scheduled_start", "未設定")
+        await query.message.edit_text(
+            f"🕐 <b>排程設定</b>\n\n"
+            f"當前排程：{sched}\n\n"
+            "請使用指令設定：\n"
+            "<code>/schedule 2026-04-02 20:00</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
 
-    elif query.data == "admin_batch_start":
-        # Trigger /start_batch logic
+    elif data == "admin_start_batch":
         if not current_auction.get("batch_queue"):
-            await query.message.edit_text("❌ 請先使用 /import_batch 匯入拍賣品。")
+            await query.message.edit_text("❌ 請先【Import Batch】匯入拍賣品。")
             return
         if current_auction.get("active"):
             await query.message.edit_text("❌ 已有拍賣正在進行中。")
             return
         await query.message.edit_text("🚀 正在啟動批次拍賣...")
         await start_batch_command(update, context)
+        return
 
-    elif query.data == "admin_batch_pause":
+    elif data == "admin_pause":
         if not current_auction.get("batch_mode"):
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
+            return
+        if current_auction.get("batch_paused"):
+            await query.message.edit_text("⚠️ 已經是暫停狀態。")
             return
         current_auction["batch_paused"] = True
-        await show_batch_admin_panel(context.bot, chat_id=query.message.chat_id)
+        await query.message.edit_text("⏸ 批次拍賣已暫停。")
+        return
 
-    elif query.data == "admin_batch_resume":
+    elif data == "admin_resume":
         if not current_auction.get("batch_mode"):
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
+        if not current_auction.get("batch_paused"):
+            await query.message.edit_text("⚠️ 不是暫停狀態。")
+            return
         current_auction["batch_paused"] = False
-        await show_batch_admin_panel(context.bot, chat_id=query.message.chat_id)
+        await query.message.edit_text("▶️ 批次拍賣已恢復！")
+        return
 
-    elif query.data == "admin_batch_abort":
+    elif data == "admin_abort":
         if not current_auction.get("batch_mode"):
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
@@ -2106,19 +2141,145 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         BATCH_PANEL_MESSAGE_ID = None
         BATCH_PANEL_CHAT_ID = None
         await query.message.edit_text("🛑 批次拍賣已終止。")
+        return
+
+    elif data == "admin_batch_status":
+        # Show batch status
+        queue = current_auction.get("batch_queue", [])
+        queue_len = len(queue)
+        if current_auction.get("batch_mode"):
+            idx = current_auction.get("batch_current_index", 0) + 1
+            title = html.escape(current_auction.get("title", "?"))
+            status = "⏸ 已暫停" if current_auction.get("batch_paused") else "▶️ 運行中"
+            text = (
+                f"📊 <b>批次狀態</b>\n\n"
+                f"📦 隊列：{queue_len} 件\n"
+                f"📌 進度：Item {idx}/{queue_len}\n"
+                f"📝 當前：{title}\n"
+                f"🔘 狀態：{status}\n"
+                f"🕐 排程：{current_auction.get('scheduled_start', '無')}"
+            )
+        else:
+            text = (
+                f"📊 <b>批次狀態</b>\n\n"
+                f"📦 隊列：{queue_len} 件\n"
+                f"🕐 排程：{current_auction.get('scheduled_start', '未設定')}"
+            )
+        await query.message.edit_text(text, parse_mode=ParseMode.HTML)
+        return
+
+    elif data == "admin_broadcast":
+        await query.message.edit_text(
+            "📢 <b>廣播訊息</b>\n\n"
+            "請使用指令發送：\n"
+            "<code>/broadcast 今晚8點拍賣開始！</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    elif data == "admin_set_prod":
+        prod_id = await store.get_config("prod_group_id")
+        prod_id = prod_id or await store.get_config("group_id") or "未設定"
+        await query.message.edit_text(
+            "📢 <b>設定客戶群組</b>\n\n"
+            f"當前客戶群組 ID：<code>{prod_id}</code>\n\n"
+            "請在目標群組發送指令：\n"
+            "<code>/set_prod_group</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    elif data == "admin_set_test":
+        test_id = await store.get_config("test_group_id") or "未設定"
+        await query.message.edit_text(
+            "🧪 <b>設定測試群組</b>\n\n"
+            f"當前測試群組 ID：<code>{test_id}</code>\n\n"
+            "請在目標群組發送指令：\n"
+            "<code>/set_test_group</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    elif data == "admin_end_auction":
+        if not current_auction["active"]:
+            await query.message.edit_text("❌ 當前沒有進行中的拍賣。")
+            return
+        if current_auction["timer_task"]:
+            current_auction["timer_task"].cancel()
+            current_auction["timer_task"] = None
+        await end_auction(context.bot)
+        await query.message.edit_text("✅ 已強制結束拍賣。")
+        return
+
+    # --- Legacy callbacks ---
+    if query.data.startswith("admin_order_mgmt"):
+        page = 1
+        parts = query.data.split("_")
+        if len(parts) >= 4 and parts[3].isdigit():
+            page = int(parts[3])
+
+        await admin_order_mgmt_menu(update, context, page)
+
+    elif query.data.startswith("adm_ord_"):
+        await handle_admin_order_action(update, context)
+
+    elif query.data == "admin_force_end":
+        if not current_auction["active"]:
+            await query.message.reply_text("❌ 當前沒有進行中的拍賣。")
+            return
+
+        if current_auction["timer_task"]:
+            current_auction["timer_task"].cancel()
+            current_auction["timer_task"] = None
+
+        await end_auction(context.bot)
+        await query.message.reply_text("✅ 已強制結束拍賣。")
+
+    elif query.data == "admin_end_session":
+        if current_auction["active"]:
+            await query.message.edit_text("❌ 請先結束當前進行中的拍賣，再進行當日結算。")
+            return
+
+        keyboard = [
+            [InlineKeyboardButton("✅ 確認結算並發送帳單", callback_data="confirm_end_session")],
+            [InlineKeyboardButton("❌ 取消", callback_data="cancel_end_session")]
+        ]
+        await query.message.edit_text(
+            "⚠️ <b>確認結束當日拍賣會？</b>\n\n"
+            "這將會：\n1. 統計今日所有中標訂單\n2. 按用戶合併訂單\n3. 自動私訊發送總帳單給每位中標者\n\n此操作不可撤銷。",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    elif query.data == "confirm_end_session":
+        await process_daily_settlement(update, context)
+        return
+
+    elif query.data == "cancel_end_session":
+        await query.message.edit_text("已取消結算操作。")
+        return
+
+    elif query.data == "admin_export":
+        await export_data(update, context)
+        return
+
+    elif query.data == "admin_batch_menu":
+        await show_batch_admin_panel(context.bot, chat_id=query.message.chat_id)
+        return
 
     elif query.data == "admin_back":
         await admin_menu(update, context)
+        return
 
     elif query.data == "admin_status":
         import platform
         from datetime import timedelta, timezone
-        
+
         status = "🟢 運行中" if current_auction["active"] else "⚪ 閒置"
         db_type = "PostgreSQL 🐘" if store.is_pg else "SQLite/JSON 📁 (本地)"
         db_conn_str = DATABASE_URL
-        
-        # Mask sensitive info
+
         if db_conn_str:
             parts = db_conn_str.split("@")
             if len(parts) > 1:
@@ -2127,17 +2288,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db_conn_str = "********"
         else:
             db_conn_str = store.db_file
-            
-        # System Info
+
         sys_info = f"OS: {platform.system()} {platform.release()}\n"
-        
-        # Time (UTC+8)
         tz_offset = timedelta(hours=8)
-        # datetime is shadowed by class, so use datetime.now(tz) directly if timezone imported
-        # But datetime class is imported as datetime
         now_taipei = datetime.now(timezone(tz_offset)).strftime('%Y-%m-%d %H:%M')
         sys_info += f"Time: {now_taipei} (UTC+8)\n"
-        
+
         all_users = await store.get_all_users()
         msg = (
             f"ℹ️ <b>系統狀態概覽</b>\n"
@@ -2149,11 +2305,39 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 <b>註冊用戶</b>: {len(all_users)} 人\n"
             f"🖥 <b>運行環境</b>:\n<pre>{sys_info}</pre>\n"
         )
-        
+
         if not store.is_pg:
             msg += "\n🚨 <b>警告</b>: 當前使用本地文件。在 Zeabur 等雲環境下，每次部署/重啟都會清除數據！請務必配置 PostgreSQL 服務。"
 
-        await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        await query.message.edit_text(msg, parse_mode=ParseMode.HTML)
+        return
+
+    elif query.data.startswith("admin_order_mgmt"):
+        page = 1
+        parts = query.data.split("_")
+        if len(parts) >= 4 and parts[3].isdigit():
+            page = int(parts[3])
+        await admin_order_mgmt_menu(update, context, page)
+        return
+
+    elif query.data.startswith("adm_ord_"):
+        await handle_admin_order_action(update, context)
+        return
+
+    elif query.data == "admin_force_end":
+        if not current_auction["active"]:
+            await query.message.edit_text("❌ 當前沒有進行中的拍賣。")
+            return
+        if current_auction["timer_task"]:
+            current_auction["timer_task"].cancel()
+            current_auction["timer_task"] = None
+        await end_auction(context.bot)
+        await query.message.edit_text("✅ 已強制結束拍賣。")
+        return
+
+    # Show admin panel for any unmatched admin callbacks
+    await admin_menu(update, context)
+
 
 async def force_end_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
