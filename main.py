@@ -1791,13 +1791,7 @@ async def process_blind_bid(user, price, query=None, bot=None):
             await query.answer(f"⚡️ 一口價成交！恭喜您！", show_alert=True)
         return
     
-    # Anti-sniping: extend timer if bid within last 5 seconds
-    now = datetime.now().timestamp()
-    remaining = current_auction["end_time"] - now
-    if remaining < 5:
-        current_auction["end_time"] += 5
-        if current_auction.get("update_event"):
-            current_auction["update_event"].set()
+    # Anti-sniping disabled per user request
 
 async def notify_previous_bidder(bot, previous_bidder_id, title, new_price, new_bidder_name):
     try:
