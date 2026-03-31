@@ -1095,6 +1095,10 @@ async def auction_timer_loop(bot):
     last_update_time = 0
     event = current_auction["update_event"]
     
+    # Countdown update points (seconds before end)
+    UPDATE_POINTS = [25, 20, 15, 10, 5, 4, 3, 2, 1]
+    last_updated_point = None
+    
     while True:
         try:
             # Safety: if auction is not active, stop the loop
@@ -1112,11 +1116,16 @@ async def auction_timer_loop(bot):
                     logger.error(f"Failed to end auction in timer loop: {e}")
                 break
 
-            # Limit update frequency to avoid rate limits
-            limit = 1.0 if remaining < 10 else 2.0
+            # Check if we need to update at this countdown point
+            current_point = None
+            for point in UPDATE_POINTS:
+                if remaining <= point:
+                    current_point = point
             
-            # Check if we should update
-            if now - last_update_time >= limit:
+            # Update if we've crossed a countdown point
+            should_update = (current_point is not None and last_updated_point != current_point)
+            
+            if should_update:
                 try:
                     await bot.edit_message_caption(
                         chat_id=current_auction["chat_id"],
@@ -1125,21 +1134,33 @@ async def auction_timer_loop(bot):
                         reply_markup=generate_bid_keyboard(current_auction["current_price"]),
                         parse_mode=ParseMode.HTML
                     )
-                    last_update_time = datetime.now().timestamp()
+                    last_updated_point = current_point
                 except Exception as e:
                     # Ignore "message is not modified" error
                     if "message is not modified" not in str(e):
                         logger.warning(f"Update message failed: {e}")
-                        # Don't update again immediately to avoid rate limit
-                        last_update_time = datetime.now().timestamp()
+                        last_updated_point = current_point
             
-            # Calculate wait time
-            target_time = last_update_time + limit
-            wait_seconds = max(0.1, target_time - datetime.now().timestamp())
-                
+            # Wait until next expected update point or 1 second, whichever comes first
+            if current_point is not None:
+                # Find next point after current
+                next_point = None
+                for point in UPDATE_POINTS:
+                    if point < current_point:
+                        next_point = point
+                        break
+                if next_point is not None:
+                    wait_time = min(remaining - next_point, 1.0)
+                else:
+                    wait_time = 0.1
+            else:
+                wait_time = 1.0
+            
+            wait_time = max(0.1, min(wait_time, 1.0))
+            
             # Wait for event or timeout
             try:
-                await asyncio.wait_for(event.wait(), timeout=wait_seconds)
+                await asyncio.wait_for(event.wait(), timeout=wait_time)
                 event.clear()
             except asyncio.TimeoutError:
                 pass
@@ -1149,8 +1170,7 @@ async def auction_timer_loop(bot):
         except Exception as e:
             logger.error(f"Timer loop error: {e}")
             # If error, check if auction should end
-            now = datetime.now().timestamp()
-            remaining = current_auction["end_time"] - now
+            remaining = current_auction["end_time"] - datetime.now().timestamp()
             if remaining <= 0:
                 try:
                     await end_auction(bot)
