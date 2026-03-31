@@ -1695,7 +1695,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2️⃣ <b>出價方式</b>：\n"
         "   • 點擊拍賣訊息下方的 <b>私訊出價按鈕</b>。\n"
         "   • 所有出價都係 <b>匿名暗標</b>，其他人睇唔到你出幾多錢。\n"
-        "   • <b>防狙擊機制</b>：若在最後 5 秒內有人出價，時間自動延長 5 秒。\n"
+        "   • <b>暗標制</b>：所有出價均為匿名，結果於拍賣結束後揭曉。\n"
         "3️⃣ <b>得標結算</b>：\n"
         "   • 拍賣完結後，最高出價先至會公開。\n"
         "   • 系統會私訊得標者送出結算通知。\n"
@@ -1782,34 +1782,33 @@ async def user_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_admin_keyboard():
     """Build the unified admin panel inline keyboard."""
     keyboard = [
-        # 🏠 Header row (just a label, no button)
         # 📦 Auction section
         [
-            InlineKeyboardButton("➕ Add Single", callback_data="admin_add_single"),
-            InlineKeyboardButton("📥 Import Batch", callback_data="admin_import_batch"),
-            InlineKeyboardButton("📋 View Queue", callback_data="admin_view_queue"),
+            InlineKeyboardButton("➕ 新增單件", callback_data="admin_add_single"),
+            InlineKeyboardButton("📥 批量匯入", callback_data="admin_import_batch"),
+            InlineKeyboardButton("📋 查看隊列", callback_data="admin_view_queue"),
         ],
         # 🚀 Batch Control section
         [
-            InlineKeyboardButton("🕐 Schedule", callback_data="admin_schedule"),
-            InlineKeyboardButton("🚀 Start", callback_data="admin_start_batch"),
-            InlineKeyboardButton("⏸ Pause", callback_data="admin_pause"),
-            InlineKeyboardButton("▶️ Resume", callback_data="admin_resume"),
-            InlineKeyboardButton("🛑 Abort", callback_data="admin_abort"),
+            InlineKeyboardButton("🕐 排程", callback_data="admin_schedule"),
+            InlineKeyboardButton("🚀 開始", callback_data="admin_start_batch"),
+            InlineKeyboardButton("⏸ 暫停", callback_data="admin_pause"),
+            InlineKeyboardButton("▶️ 繼續", callback_data="admin_resume"),
+            InlineKeyboardButton("🛑 終止", callback_data="admin_abort"),
         ],
         # 📊 Status section
         [
-            InlineKeyboardButton("📊 Batch Status", callback_data="admin_batch_status"),
-            InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
+            InlineKeyboardButton("📊 拍賣狀態", callback_data="admin_batch_status"),
+            InlineKeyboardButton("📢 廣播通知", callback_data="admin_broadcast"),
         ],
         # ⚙️ Settings section
         [
-            InlineKeyboardButton("📢 Set Prod Group", callback_data="admin_set_prod"),
-            InlineKeyboardButton("🧪 Set Test Group", callback_data="admin_set_test"),
+            InlineKeyboardButton("📢 設定正式群", callback_data="admin_set_prod"),
+            InlineKeyboardButton("🧪 設定測試群", callback_data="admin_set_test"),
         ],
         # 🛑 End Auction
         [
-            InlineKeyboardButton("🛑 End Auction", callback_data="admin_end_auction"),
+            InlineKeyboardButton("🛑 結束拍賣", callback_data="admin_end_auction"),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -1822,8 +1821,8 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = (
-        "🏠 <b>Admin Panel</b>\n\n"
-        "Select an action:"
+        "🏠 <b>管理員面板</b>\n\n"
+        "請選擇操作："
     )
 
     # Delete the command message if it's a /admin call to keep chat clean
