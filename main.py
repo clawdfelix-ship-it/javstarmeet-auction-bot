@@ -3729,19 +3729,12 @@ async def main():
     # 使用 drop_pending_updates 防止舊消息干擾
     await application.initialize()
 
-    # 設定 Bot 命令選單
+    # 設定 Bot 命令選單（只顯示俾普通用戶）
     from telegram import BotCommand
     commands = [
         BotCommand("start", "開始 / 註冊"),
         BotCommand("help", "拍賣規則"),
         BotCommand("my_orders", "我的中標記錄"),
-        BotCommand("new_auction", "上架拍賣 (Admin)"),
-        BotCommand("import_batch", "批次匯入 (Admin)"),
-        BotCommand("schedule", "排程拍賣 (Admin)"),
-        BotCommand("start_batch", "開始批次 (Admin)"),
-        BotCommand("batch_status", "批次狀態 (Admin)"),
-        BotCommand("broadcast", "廣播通知 (Admin)"),
-        BotCommand("admin", "管理選單 (Admin)"),
     ]
     await application.bot.set_my_commands(commands)
 
