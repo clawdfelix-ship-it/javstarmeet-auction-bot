@@ -338,6 +338,333 @@ CUSTOM_BID_PROMPT = "請回覆此訊息輸入您的出價金額 (純數字)："
 ITEM_DURATION = 25        # seconds per auction item
 PAUSE_BETWEEN_ITEMS = 3  # seconds pause between items in batch mode
 
+# --- Batch Admin Panel Message Tracking ---
+BATCH_PANEL_MESSAGE_ID = None  # chat_id, message_id of the admin panel
+BATCH_PANEL_CHAT_ID = None
+
+# --- Batch Admin Panel State Machine ---
+def get_batch_state():
+    """Determine current batch state for panel display."""
+    if current_auction.get("batch_abort"):
+        return "aborting"
+    if current_auction.get("batch_mode"):
+        if current_auction.get("batch_paused"):
+            return "paused"
+        return "running"
+    if current_auction.get("scheduled_start"):
+        return "scheduled"
+    queue = current_auction.get("batch_queue", [])
+    if queue:
+        return "idle"
+    return "empty"
+
+
+def build_batch_admin_keyboard(state):
+    """Build inline keyboard based on current batch state."""
+    keyboard = []
+
+    if state == "empty":
+        # No queue - show nothing useful
+        return InlineKeyboardMarkup(keyboard)
+
+    if state == "idle":
+        # Items imported but not started
+        keyboard.append([
+            InlineKeyboardButton("🚀 開始批次拍賣", callback_data="batch_start"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("🗑️ 清空隊列", callback_data="batch_clear"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("📊 狀態", callback_data="batch_status"),
+        ])
+
+    elif state == "scheduled":
+        # Time set but not started
+        keyboard.append([
+            InlineKeyboardButton("▶️ 立即開始", callback_data="batch_start_now"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("❌ 取消排程", callback_data="batch_cancel_schedule"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("📊 狀態", callback_data="batch_status"),
+        ])
+
+    elif state == "running":
+        # Batch is actively running
+        keyboard.append([
+            InlineKeyboardButton("⏸ 暫停", callback_data="batch_pause"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("🛑 終止", callback_data="batch_abort"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("📊 狀態", callback_data="batch_status"),
+        ])
+
+    elif state == "paused":
+        # Batch is paused
+        keyboard.append([
+            InlineKeyboardButton("▶️ 恢復", callback_data="batch_resume"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("🛑 終止", callback_data="batch_abort"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("📊 狀態", callback_data="batch_status"),
+        ])
+
+    elif state == "aborting":
+        keyboard.append([
+            InlineKeyboardButton("📊 狀態", callback_data="batch_status"),
+        ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_batch_admin_text(state):
+    """Build admin panel text based on current batch state."""
+    queue_len = len(current_auction.get("batch_queue", []))
+    sched_time = current_auction.get("scheduled_start", "未設定")
+    target_type = current_auction.get("batch_target_group", "prod")
+    target_desc = "正式群組" if target_type != "test" else "測試群組"
+
+    if state == "empty":
+        return (
+            "📋 <b>批次拍賣控制台</b>\n\n"
+            "⚪ 目前沒有任何拍賣品在隊列中。\n"
+            "使用 <code>/import_batch</code> 匯入拍賣品。"
+        )
+
+    if state == "idle":
+        return (
+            "📋 <b>批次拍賣控制台</b>\n\n"
+            f"📦 隊列：{queue_len} 件\n"
+            f"🕐 排程：{sched_time}\n"
+            f"📢 目標：{target_desc}\n\n"
+            f"▶️ <b>準備就緒</b> — 按下方的按鈕開始拍賣。"
+        )
+
+    if state == "scheduled":
+        queue_len = len(current_auction.get("batch_queue", []))
+        return (
+            "📋 <b>批次拍賣控制台</b>\n\n"
+            f"📦 隊列：{queue_len} 件\n"
+            f"🕐 排程時間：{sched_time}\n"
+            f"📢 目標：{target_desc}\n\n"
+            f"⏳ <b>已排程，等待開始</b>"
+        )
+
+    if state == "running":
+        idx = current_auction.get("batch_current_index", 0) + 1
+        title = html.escape(current_auction.get("title", "?"))
+        return (
+            "📋 <b>批次拍賣控制台</b>\n\n"
+            f"📦 進度：Item {idx}/{queue_len}\n"
+            f"📌 當前：{title}\n"
+            f"🕐 排程：{sched_time}\n"
+            f"📢 目標：{target_desc}\n\n"
+            f"▶️ <b>拍賣進行中...</b>"
+        )
+
+    if state == "paused":
+        idx = current_auction.get("batch_current_index", 0) + 1
+        title = html.escape(current_auction.get("title", "?"))
+        return (
+            "📋 <b>批次拍賣控制台</b>\n\n"
+            f"📦 進度：Item {idx}/{queue_len}\n"
+            f"📌 當前：{title}\n"
+            f"🕐 排程：{sched_time}\n"
+            f"📢 目標：{target_desc}\n\n"
+            f"⏸ <b>已暫停</b>"
+        )
+
+    if state == "aborting":
+        return (
+            "📋 <b>批次拍賣控制台</b>\n\n"
+            f"🛑 <b>正在終止...</b>\n\n"
+            "請等待當前項目結束。"
+        )
+
+    return "📋 <b>批次拍賣控制台</b>"
+
+
+async def show_batch_admin_panel(bot, chat_id=None, message_id=None, update_existing=True):
+    """Send or edit the admin batch control panel message."""
+    global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
+
+    state = get_batch_state()
+    text = build_batch_admin_text(state)
+    keyboard = build_batch_admin_keyboard(state)
+
+    admin_id = ADMIN_IDS[0] if ADMIN_IDS else None
+    target_chat_id = chat_id or admin_id
+    if not target_chat_id:
+        return
+
+    try:
+        if update_existing and BATCH_PANEL_MESSAGE_ID and BATCH_PANEL_CHAT_ID:
+            # Try to edit existing panel message
+            try:
+                await bot.edit_message_text(
+                    chat_id=BATCH_PANEL_CHAT_ID,
+                    message_id=BATCH_PANEL_MESSAGE_ID,
+                    text=text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML
+                )
+                return
+            except Exception:
+                # Message not found or can't be edited - send new one
+                BATCH_PANEL_MESSAGE_ID = None
+                BATCH_PANEL_CHAT_ID = None
+
+        # Send new panel message
+        msg = await bot.send_message(
+            chat_id=target_chat_id,
+            text=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+        BATCH_PANEL_MESSAGE_ID = msg.message_id
+        BATCH_PANEL_CHAT_ID = target_chat_id
+
+    except Exception as e:
+        logger.error(f"Failed to show batch admin panel: {e}")
+
+
+# --- Batch Callback Handlers ---
+
+async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle all batch admin panel button clicks."""
+    query = update.callback_query
+    user = query.from_user
+
+    if user.id not in ADMIN_IDS:
+        await query.answer("⛔ 權限不足", show_alert=True)
+        return
+
+    await query.answer()
+    data = query.data
+    bot = context.bot
+
+    if data == "batch_start":
+        # Start the batch auction
+        if not current_auction.get("batch_queue"):
+            await query.message.edit_text("❌ 請先使用 /import_batch 匯入拍賣品。")
+            return
+        if current_auction.get("active"):
+            await query.message.edit_text("❌ 已有拍賣正在進行中。")
+            return
+        # Trigger start - redirect by editing message and letting admin use command
+        await query.message.edit_text(
+            "🚀 正在啟動批次拍賣...\n\n"
+            "使用 <code>/start_batch</code> 開始拍賣。",
+            parse_mode=ParseMode.HTML
+        )
+        # Actually start it
+        await start_batch_command(update, context)
+
+    elif data == "batch_clear":
+        # Clear the queue
+        queue_len = len(current_auction.get("batch_queue", []))
+        current_auction["batch_queue"] = []
+        current_auction["batch_mode"] = False
+        current_auction["scheduled_start"] = None
+        current_auction["batch_current_index"] = 0
+        current_auction["batch_paused"] = False
+        current_auction["batch_abort"] = False
+        global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
+        BATCH_PANEL_MESSAGE_ID = None
+        BATCH_PANEL_CHAT_ID = None
+        await query.message.edit_text(
+            f"✅ 已清空隊列（{queue_len} 件已移除）。",
+            parse_mode=ParseMode.HTML
+        )
+
+    elif data == "batch_status":
+        # Show detailed status
+        queue_len = len(current_auction.get("batch_queue", []))
+        sched_time = current_auction.get("scheduled_start", "未設定")
+        state = get_batch_state()
+
+        if current_auction.get("batch_mode"):
+            idx = current_auction.get("batch_current_index", 0) + 1
+            title = html.escape(current_auction.get("title", "?"))
+            status = "⏸ 已暫停" if current_auction.get("batch_paused") else "▶️ 運行中"
+            text = (
+                f"📊 <b>批次狀態</b>\n\n"
+                f"📦 隊列：{queue_len} 件\n"
+                f"📌 進度：Item {idx}/{queue_len}\n"
+                f"📝 當前：{title}\n"
+                f"🔘 狀態：{status}\n"
+                f"🕐 排程：{sched_time}"
+            )
+        else:
+            text = (
+                f"📊 <b>批次狀態</b>\n\n"
+                f"📦 隊列：{queue_len} 件\n"
+                f"🕐 排程：{sched_time}"
+            )
+
+        keyboard = build_batch_admin_keyboard(state)
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+    elif data == "batch_start_now":
+        # Cancel schedule and start immediately
+        current_auction["scheduled_start"] = None
+        await query.message.edit_text("🚀 正在立即開始批次拍賣...", parse_mode=ParseMode.HTML)
+        await start_batch_command(update, context)
+
+    elif data == "batch_cancel_schedule":
+        # Cancel the scheduled time
+        current_auction["scheduled_start"] = None
+        state = get_batch_state()
+        text = build_batch_admin_text(state)
+        keyboard = build_batch_admin_keyboard(state)
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        await query.message.reply_text("✅ 排程已取消。", parse_mode=ParseMode.HTML)
+
+    elif data == "batch_pause":
+        # Pause the batch
+        if not current_auction.get("batch_mode"):
+            await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
+            return
+        if current_auction.get("batch_paused"):
+            await query.answer("已經是暫停狀態", show_alert=True)
+            return
+        current_auction["batch_paused"] = True
+        await show_batch_admin_panel(bot, update_existing=True)
+
+    elif data == "batch_resume":
+        # Resume the batch
+        if not current_auction.get("batch_mode"):
+            await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
+            return
+        if not current_auction.get("batch_paused"):
+            await query.answer("不是暫停狀態", show_alert=True)
+            return
+        current_auction["batch_paused"] = False
+        await show_batch_admin_panel(bot, update_existing=True)
+
+    elif data == "batch_abort":
+        # Abort the batch
+        if not current_auction.get("batch_mode"):
+            await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
+            return
+        current_auction["batch_abort"] = True
+        current_auction["batch_paused"] = False
+        await show_batch_admin_panel(bot, update_existing=True)
+
+
+# --- Batch Auction Callback Patterns (for dispatch) ---
+BATCH_CALLBACK_PATTERNS = [
+    "batch_start", "batch_clear", "batch_status",
+    "batch_start_now", "batch_cancel_schedule",
+    "batch_pause", "batch_resume", "batch_abort",
+]
+
 # 全局拍賣狀態
 current_auction = {
     "active": False,
@@ -1741,33 +2068,8 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await export_data(update, context)
 
     elif query.data == "admin_batch_menu":
-        queue_len = len(current_auction.get("batch_queue", []))
-        is_running = current_auction.get("batch_mode", False)
-        is_paused = current_auction.get("batch_paused", False)
-        
-        status_text = "▶️ 運行中" if is_running and not is_paused else ("⏸ 已暫停" if is_paused else "⚪ 未運行")
-        
-        text = (
-            f"📋 <b>批次拍賣控制</b>\n\n"
-            f"狀態：{status_text}\n"
-            f"隊列：{queue_len} 件\n"
-            f"排程：{current_auction.get('scheduled_start', '未設定')}\n\n"
-            f"選擇操作："
-        )
-        
-        keyboard = []
-        if is_running:
-            if is_paused:
-                keyboard.append([InlineKeyboardButton("▶️ 恢復拍賣", callback_data="admin_batch_resume")])
-            else:
-                keyboard.append([InlineKeyboardButton("⏸ 暫停拍賣", callback_data="admin_batch_pause")])
-            keyboard.append([InlineKeyboardButton("🛑 終止批次", callback_data="admin_batch_abort")])
-        else:
-            keyboard.append([InlineKeyboardButton("🚀 立即開始", callback_data="admin_batch_start")])
-        
-        keyboard.append([InlineKeyboardButton("🔙 返回管理員選單", callback_data="admin_back")])
-        
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        # Redirect to the dedicated batch admin panel
+        await show_batch_admin_panel(context.bot, chat_id=query.message.chat_id)
 
     elif query.data == "admin_batch_start":
         # Trigger /start_batch logic
@@ -1778,26 +2080,21 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text("❌ 已有拍賣正在進行中。")
             return
         await query.message.edit_text("🚀 正在啟動批次拍賣...")
-        # The actual start will be handled by the command - for now just notify
-        # In a full implementation, we'd call start_batch_command here
-        await context.bot.send_message(chat_id=query.message.chat_id, text="✅ 批次拍賣已啟動")
-        # For now, redirect to command
-        # Actually in callback context we can't easily call the command
-        # So we just show a message telling admin to use the command
+        await start_batch_command(update, context)
 
     elif query.data == "admin_batch_pause":
         if not current_auction.get("batch_mode"):
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
         current_auction["batch_paused"] = True
-        await query.message.edit_text("⏸ 批次拍賣已暫停。")
+        await show_batch_admin_panel(context.bot, chat_id=query.message.chat_id)
 
     elif query.data == "admin_batch_resume":
         if not current_auction.get("batch_mode"):
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
         current_auction["batch_paused"] = False
-        await query.message.edit_text("▶️ 批次拍賣已恢復。")
+        await show_batch_admin_panel(context.bot, chat_id=query.message.chat_id)
 
     elif query.data == "admin_batch_abort":
         if not current_auction.get("batch_mode"):
@@ -1805,6 +2102,9 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         current_auction["batch_abort"] = True
         current_auction["batch_paused"] = False
+        global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
+        BATCH_PANEL_MESSAGE_ID = None
+        BATCH_PANEL_CHAT_ID = None
         await query.message.edit_text("🛑 批次拍賣已終止。")
 
     elif query.data == "admin_back":
@@ -2371,7 +2671,11 @@ async def start_single_batch_item(bot, item):
 
 
 async def notify_batch_progress(bot):
-    """Notify admin of batch progress."""
+    """Notify admin of batch progress and update the admin panel."""
+    # Update the admin panel
+    await show_batch_admin_panel(bot)
+
+    # Also send a detailed progress message
     queue_len = len(current_auction["batch_queue"])
     current_idx = current_auction["batch_current_index"] + 1  # 1-indexed for display
     title = current_auction.get("title", "?")
@@ -2405,6 +2709,11 @@ async def notify_batch_complete(bot):
     current_auction["batch_paused"] = False
     current_auction["batch_abort"] = False
     current_auction["scheduled_start"] = None
+    
+    # Clear admin panel tracking
+    global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
+    BATCH_PANEL_MESSAGE_ID = None
+    BATCH_PANEL_CHAT_ID = None
     
     if admin_id:
         try:
@@ -2548,10 +2857,11 @@ async def import_batch_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await update.message.reply_text(
         f"✅ <b>已匯入 {len(parsed_items)} 件拍賣品：</b>\n\n" +
-        "\n".join(f"{i+1}. {html.escape(item['title'])} - 起標 ${item['price']}" for i, item in enumerate(parsed_items)) +
-        f"\n\n💡 請使用 <code>/schedule</code> 設定開始時間，或使用 <code>/start_batch</code> 立即開始。",
+        "\n".join(f"{i+1}. {html.escape(item['title'])} - 起標 ${item['price']}" for i, item in enumerate(parsed_items)),
         parse_mode=ParseMode.HTML
     )
+    # Show admin batch control panel
+    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
 
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2628,10 +2938,11 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📦 件數：{queue_len} 件\n"
         f"🕐 開始時間：{scheduled_dt.strftime('%Y-%m-%d %H:%M')}\n"
         f"🕐 預計結束：{estimated_end_dt.strftime('%Y-%m-%d %H:%M')}\n"
-        f"📢 發佈群組：{target_desc}\n\n"
-        f"💡 排程時間到達時，拍賣將自動開始。",
+        f"📢 發佈群組：{target_desc}",
         parse_mode=ParseMode.HTML
     )
+    # Show admin batch control panel with scheduled state
+    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
 
 
 async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2725,6 +3036,14 @@ async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode=ParseMode.HTML
     )
 
+    # Reset admin panel tracking so it sends a new message
+    global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
+    BATCH_PANEL_MESSAGE_ID = None
+    BATCH_PANEL_CHAT_ID = None
+
+    # Show admin batch control panel
+    await show_batch_admin_panel(bot, chat_id=update.effective_chat.id)
+
     # Start first item
     item = current_auction["batch_queue"][0]
     await start_single_batch_item(bot, item)
@@ -2747,15 +3066,12 @@ async def pause_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     current_auction["batch_paused"] = True
     
-    queue_len = len(current_auction["batch_queue"])
-    current_idx = current_auction["batch_current_index"] + 1
-    
     await update.message.reply_text(
-        f"⏸ <b>批次拍賣已暫停</b>\n\n"
-        f"當前進度：Item {current_idx}/{queue_len}\n"
-        f"使用 <code>/resume_batch</code> 恢復拍賣。",
+        f"⏸ <b>批次拍賣已暫停</b>",
         parse_mode=ParseMode.HTML
     )
+    # Update admin panel
+    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
 
 
 async def resume_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2776,9 +3092,11 @@ async def resume_batch_command(update: Update, context: ContextTypes.DEFAULT_TYP
     current_auction["batch_paused"] = False
     
     await update.message.reply_text(
-        f"▶️ <b>批次拍賣已恢復！</b>\n\n下一件拍賣品即將開始...",
+        f"▶️ <b>批次拍賣已恢復！</b>",
         parse_mode=ParseMode.HTML
     )
+    # Update admin panel
+    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
 
 
 async def abort_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2796,9 +3114,13 @@ async def abort_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     current_auction["batch_paused"] = False  # Unpause so loop can exit
 
     await update.message.reply_text(
-        f"🛑 <b>批次拍賣已終止</b>\n\n隊列已清空，所有待執行的拍賣品已被取消。",
+        f"🛑 <b>批次拍賣已終止</b>",
         parse_mode=ParseMode.HTML
     )
+    # Clear admin panel
+    global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
+    BATCH_PANEL_MESSAGE_ID = None
+    BATCH_PANEL_CHAT_ID = None
 
 
 async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2842,6 +3164,8 @@ async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYP
         f"🕐 排程：{current_auction.get('scheduled_start', '無')}",
         parse_mode=ParseMode.HTML
     )
+    # Also show/update the admin panel with buttons
+    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
 
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3193,6 +3517,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
     application.add_handler(CallbackQueryHandler(process_daily_settlement, pattern="^confirm_end_session$"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^cancel_end_session$"))
+    application.add_handler(CallbackQueryHandler(handle_batch_callback, pattern="^batch_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_text))
     application.add_handler(CommandHandler("export", export_data))
     application.add_handler(CommandHandler("ban", ban_command))
