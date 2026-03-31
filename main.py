@@ -356,8 +356,60 @@ current_auction = {
     "update_event": asyncio.Event(),
     "session_id": None,
     "session_seq": 0,
-    "bot_username": None
+    "bot_username": None,
+    "_ending": False   # Flag: auction is in the process of ending (used to accept late-arriving bids)
 }
+
+# --- Auction State Persistence ---
+AUCTION_STATE_FILE = "auction_state.json"
+
+def save_auction_state():
+    """Persist current_auction to JSON for crash recovery."""
+    try:
+        # Only save if auction was ever activated (has title/chat_id)
+        if current_auction.get("title") and current_auction.get("chat_id"):
+            with open(AUCTION_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(current_auction, f, ensure_ascii=False, indent=2, default=str)
+            logger.info(f"Auction state saved: {current_auction.get('title')}")
+        elif os.path.exists(AUCTION_STATE_FILE):
+            # Clean up stale file if no active auction
+            try:
+                os.remove(AUCTION_STATE_FILE)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error(f"Failed to save auction state: {e}")
+
+def load_auction_state():
+    """Load auction state from JSON. Returns True if a valid active auction was restored."""
+    if not os.path.exists(AUCTION_STATE_FILE):
+        return False
+    try:
+        with open(AUCTION_STATE_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if loaded.get("active") and loaded.get("title"):
+            # Restore into current_auction (preserve Event/lock objects)
+            preserved_keys = {"update_event": current_auction["update_event"], "timer_task": None}
+            current_auction.update(loaded)
+            current_auction["update_event"] = preserved_keys["update_event"]
+            current_auction["timer_task"] = None
+            current_auction["_ending"] = False
+            # Recalculate end_time relative to now if it was stored as a timestamp
+            if isinstance(current_auction.get("end_time"), (int, float)):
+                saved_end = current_auction["end_time"]
+                remaining = saved_end - datetime.now().timestamp()
+                # If auction would have already expired, treat as finished
+                if remaining < 5:
+                    current_auction["active"] = False
+                    logger.info(f"Loaded auction '{loaded.get('title')}' has expired; skipping resume.")
+                    save_auction_state()  # will clean up
+                    return False
+                # else: still has time, can resume
+            logger.info(f"Auction state restored: {loaded.get('title')}, remaining {remaining:.0f}s")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to load auction state: {e}")
+    return False
 
 # Lock to prevent race conditions when multiple users bid simultaneously
 auction_lock = asyncio.Lock()
@@ -1799,6 +1851,13 @@ async def process_blind_bid(user, price, query=None, bot=None):
     async with auction_lock:
         # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
         # 每人只能出一次價，價錢任意，最後 reveal 時價高者得
+
+        # Issue 1 fix: if auction is in the process of ending (end_auction running),
+        # extend time by 2s to accept the bid rather than rejecting it outright.
+        if current_auction.get("_ending"):
+            current_auction["end_time"] = datetime.now().timestamp() + 2
+            logger.info(f"Late bid accepted; auction extended by 2s (user {user.id})")
+
         existing_bids = current_auction.get("bidders", [])
         if any(b["id"] == user.id for b in existing_bids):
             if query: await query.answer("❌ 你已經出過價了", show_alert=True)
@@ -1920,6 +1979,10 @@ async def start_auction_from_queue(bot, item):
     current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(bot))
 
 async def end_auction(bot):
+    # Issue 1 fix: mark auction as "ending" before releasing lock so that
+    # process_blind_bid can detect it and extend time instead of rejecting.
+    current_auction["_ending"] = True
+
     bidders = current_auction.get("bidders", [])
     # Sort by price descending, then by time ascending (tie = earliest wins)
     sorted_bidders = sorted(bidders, key=lambda x: (-x["price"], x.get("time", 0)))
@@ -1960,6 +2023,8 @@ async def end_auction(bot):
         f"系統將自動發送結算連結給得標者。"
     )
     
+    # Issue 3 fix: retry once on 429 (rate limit) after 5s
+    edit_ok = False
     try:
         await bot.edit_message_caption(
             chat_id=current_auction["chat_id"],
@@ -1968,17 +2033,36 @@ async def end_auction(bot):
             reply_markup=None,
             parse_mode=ParseMode.HTML
         )
+        edit_ok = True
     except Exception as e:
-        logger.error(f"Failed to edit auction message: {e}")
-        # Fallback: Send a new message if edit fails (e.g. message deleted or rate limit)
-        try:
-            await bot.send_message(
-                chat_id=current_auction["chat_id"],
-                text=final_text,
-                parse_mode=ParseMode.HTML
-            )
-        except Exception as e2:
-            logger.error(f"Failed to send fallback message: {e2}")
+        err_str = str(e)
+        logger.warning(f"Failed to edit auction message: {e}")
+        # Retry once on rate limit
+        if "429" in err_str:
+            logger.info("Rate limited (429); waiting 5s before retry...")
+            await asyncio.sleep(5)
+            try:
+                await bot.edit_message_caption(
+                    chat_id=current_auction["chat_id"],
+                    message_id=current_auction["message_id"],
+                    caption=final_text,
+                    reply_markup=None,
+                    parse_mode=ParseMode.HTML
+                )
+                edit_ok = True
+            except Exception as e2:
+                logger.error(f"Retry also failed: {e2}")
+        # If not a 429, also try fallback below
+        # Fallback: Send a new message only if edit truly failed (not rate-limited and retried)
+        if not edit_ok:
+            try:
+                await bot.send_message(
+                    chat_id=current_auction["chat_id"],
+                    text=final_text,
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as e2:
+                logger.error(f"Failed to send fallback message: {e2}")
     
     if winner_id:
         order = {
@@ -2029,6 +2113,9 @@ async def end_auction(bot):
                 text=f"⚠️ 無法私聊得標者 (ID: {winner_id})，請主動聯繫管理員。"
             )
 
+    # Issue 2 fix: persist state and reset ending flag
+    current_auction["_ending"] = False
+    save_auction_state()
     await start_next_queued_auction(bot)
 
 # --- CSV Export & Blacklist ---
@@ -2279,6 +2366,14 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     # 連接數據庫
     await store.connect()
+
+    # Issue 2 fix: check for unfinished auction from previous run
+    if load_auction_state():
+        # Auction was active when bot crashed — auto-abort and notify admin on next start
+        logger.warning("Unfinished auction found on startup; auto-aborting.")
+        current_auction["active"] = False
+        current_auction["_ending"] = False
+        save_auction_state()  # clears the file
 
     # 啟動 Web Server (為了 Zeabur 保持活躍)
     await run_web_server()
