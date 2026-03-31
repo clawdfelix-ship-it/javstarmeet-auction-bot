@@ -347,7 +347,7 @@ current_auction = {
     "pending_price": 0,     # 暗標：待 reveal 的價格
     "pending_bidder": None, # user_id
     "pending_bidder_name": "無",
-    "bidders": [],          # list of {id, name, price} - all bidders with their bid amounts
+    "bidders": [],          # list of {id, name, price, time} - all bidders
     "highest_bidder": None,  # 上一個最高出價者 (for outbid notification)
     "highest_bidder_name": "無",
     "message_id": None,     # 拍賣訊息 ID (群組)
@@ -358,6 +358,9 @@ current_auction = {
     "session_seq": 0,
     "bot_username": None
 }
+
+# Lock to prevent race conditions when multiple users bid simultaneously
+auction_lock = asyncio.Lock()
 
 # --- 註冊流程 ---
 async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1094,16 +1097,22 @@ async def auction_timer_loop(bot):
     
     while True:
         try:
+            # Safety: if auction is not active, stop the loop
+            if not current_auction["active"]:
+                break
+
             now = datetime.now().timestamp()
             remaining = current_auction["end_time"] - now
             
+            # Force end if time is up - safety net
             if remaining <= 0:
-                await end_auction(bot)
+                try:
+                    await end_auction(bot)
+                except Exception as e:
+                    logger.error(f"Failed to end auction in timer loop: {e}")
                 break
 
-            # Limit update frequency
-            # Increase interval to avoid rate limits (429 Too Many Requests)
-            # Normal: 2.0s, Last 10s: 1.0s (was 1.0/0.5)
+            # Limit update frequency to avoid rate limits
             limit = 1.0 if remaining < 10 else 2.0
             
             # Check if we should update
@@ -1117,35 +1126,37 @@ async def auction_timer_loop(bot):
                         parse_mode=ParseMode.HTML
                     )
                     last_update_time = datetime.now().timestamp()
-                    now = last_update_time # Recalculate 'now' after update
                 except Exception as e:
                     # Ignore "message is not modified" error
                     if "message is not modified" not in str(e):
                         logger.warning(f"Update message failed: {e}")
-                        # Avoid tight loop on error
-                        await asyncio.sleep(1)
+                        # Don't update again immediately to avoid rate limit
                         last_update_time = datetime.now().timestamp()
             
-            # Calculate dynamic wait time
-            # Target time is last_update_time + limit
+            # Calculate wait time
             target_time = last_update_time + limit
-            wait_seconds = target_time - datetime.now().timestamp()
-            
-            # Ensure wait time is reasonable
-            if wait_seconds < 0.1:
-                wait_seconds = 0.1
+            wait_seconds = max(0.1, target_time - datetime.now().timestamp())
                 
             # Wait for event or timeout
             try:
                 await asyncio.wait_for(event.wait(), timeout=wait_seconds)
                 event.clear()
             except asyncio.TimeoutError:
-                pass # Timeout means it's time to update (or check time)
+                pass
                     
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error(f"Timer loop error: {e}")
+            # If error, check if auction should end
+            now = datetime.now().timestamp()
+            remaining = current_auction["end_time"] - now
+            if remaining <= 0:
+                try:
+                    await end_auction(bot)
+                except Exception as e2:
+                    logger.error(f"Failed to end auction after error: {e2}")
+                break
             await asyncio.sleep(1)
 
 async def handle_private_bid_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1764,34 +1775,36 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 async def process_blind_bid(user, price, query=None, bot=None):
-    # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
-    # 每人只能出一次價，價錢任意，最後 reveal 時價高者得
-    existing_bids = current_auction.get("bidders", [])
-    if any(b["id"] == user.id for b in existing_bids):
-        if query: await query.answer("❌ 你已經出過價了", show_alert=True)
-        return
+    # Use lock to prevent race conditions
+    async with auction_lock:
+        # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
+        # 每人只能出一次價，價錢任意，最後 reveal 時價高者得
+        existing_bids = current_auction.get("bidders", [])
+        if any(b["id"] == user.id for b in existing_bids):
+            if query: await query.answer("❌ 你已經出過價了", show_alert=True)
+            return
 
-    # Store as pending (not yet public) and track bidder
-    current_auction["pending_price"] = price
-    current_auction["pending_bidder"] = user.id
-    current_auction["pending_bidder_name"] = user.first_name
-    current_auction["bidders"].append({"id": user.id, "name": user.first_name, "price": price, "time": datetime.now().timestamp()})
-    
-    # Check Buy It Now
-    bin_price = current_auction.get("bin_price", 0)
-    if bin_price > 0 and price >= bin_price:
-        # End auction immediately
-        current_auction["end_time"] = datetime.now().timestamp()
-        if current_auction.get("timer_task"):
-            current_auction["timer_task"].cancel()
-        target_bot = bot if bot else (query.bot if query else None)
-        if target_bot:
-            await end_auction(target_bot)
-        if query:
-            await query.answer(f"⚡️ 一口價成交！恭喜您！", show_alert=True)
-        return
-    
-    # Anti-sniping disabled per user request
+        # Store as pending (not yet public) and track bidder
+        current_auction["pending_price"] = price
+        current_auction["pending_bidder"] = user.id
+        current_auction["pending_bidder_name"] = user.first_name
+        current_auction["bidders"].append({"id": user.id, "name": user.first_name, "price": price, "time": datetime.now().timestamp()})
+        
+        # Check Buy It Now
+        bin_price = current_auction.get("bin_price", 0)
+        if bin_price > 0 and price >= bin_price:
+            # End auction immediately
+            current_auction["end_time"] = datetime.now().timestamp()
+            if current_auction.get("timer_task"):
+                current_auction["timer_task"].cancel()
+            target_bot = bot if bot else (query.bot if query else None)
+            if target_bot:
+                await end_auction(target_bot)
+            if query:
+                await query.answer(f"⚡️ 一口價成交！恭喜您！", show_alert=True)
+            return
+        
+        # Anti-sniping disabled per user request
 
 async def notify_previous_bidder(bot, previous_bidder_id, title, new_price, new_bidder_name):
     try:
