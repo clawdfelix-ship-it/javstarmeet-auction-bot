@@ -1887,19 +1887,26 @@ async def start_auction_from_queue(bot, item):
     current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(bot))
 
 async def end_auction(bot):
-    # Reveal pending price and bidder (暗標揭曉)
-    current_auction["current_price"] = current_auction["pending_price"]
-    current_auction["highest_bidder"] = current_auction["pending_bidder"]
-    current_auction["highest_bidder_name"] = current_auction["pending_bidder_name"]
-    
-    current_auction["active"] = False
-    winner_id = current_auction["highest_bidder"]
-    price = current_auction["current_price"]
-    title = current_auction["title"]
-    
     bidders = current_auction.get("bidders", [])
-    # Sort by price descending for display
+    # Sort by price descending - highest price wins
     sorted_bidders = sorted(bidders, key=lambda x: x["price"], reverse=True)
+
+    # Determine winner: highest bidder (first in sorted list)
+    if sorted_bidders:
+        winner = sorted_bidders[0]
+        winner_id = winner["id"]
+        winner_name = winner["name"]
+        price = winner["price"]
+    else:
+        winner_id = None
+        winner_name = "無"
+        price = 0
+
+    current_auction["active"] = False
+    current_auction["current_price"] = price
+    current_auction["highest_bidder"] = winner_id
+    current_auction["highest_bidder_name"] = winner_name
+    title = current_auction["title"]
 
     # Build bidders list text
     if sorted_bidders:
@@ -1915,7 +1922,7 @@ async def end_auction(bot):
         f"🛑 <b>拍賣結束！</b> 🛑\n\n"
         f"📦 {html.escape(title)}\n"
         f"💰 最終成交價：<b>${price}</b>\n"
-        f"🏆 得標者：{html.escape(current_auction['highest_bidder_name'])}\n"
+        f"🏆 得標者：{html.escape(winner_name)}\n"
         f"{bidders_text}\n"
         f"系統將自動發送結算連結給得標者。"
     )
