@@ -1811,9 +1811,10 @@ def build_admin_keyboard():
             InlineKeyboardButton("📢 設定正式群", callback_data="admin_set_prod"),
             InlineKeyboardButton("🧪 設定測試群", callback_data="admin_set_test"),
         ],
-        # 🛑 End Auction
+        # 🛑 End Auction & Settlement
         [
             InlineKeyboardButton("🛑 結束拍賣", callback_data="admin_end_auction"),
+            InlineKeyboardButton("📋 當日結算", callback_data="admin_end_session"),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
