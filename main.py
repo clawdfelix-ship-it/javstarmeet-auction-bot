@@ -1883,6 +1883,8 @@ def build_admin_keyboard():
         [
             InlineKeyboardButton("📊 拍賣狀態", callback_data="admin_batch_status"),
             InlineKeyboardButton("📢 廣播通知", callback_data="admin_broadcast"),
+            InlineKeyboardButton("📤 匯出訂單", callback_data="admin_export"),
+            InlineKeyboardButton("👥 匯出會員", callback_data="export_members"),
         ],
         # ⚙️ Settings section
         [
@@ -2372,6 +2374,10 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "admin_export":
         await export_data(update, context)
+        return
+
+    elif query.data == "export_members":
+        await export_members(update, context)
         return
 
     elif query.data == "admin_batch_menu":
@@ -3519,6 +3525,36 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- CSV Export & Blacklist ---
+
+async def export_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """匯出會員資料"""
+    user = update.effective_user
+    if user.id not in ADMIN_IDS:
+        return
+
+    message = update.effective_message
+    
+    users = await store.get_all_users()
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow(['user_id', 'name', 'phone', 'email', 'pickup', 'registered_at'])
+    
+    for u in users:
+        cw.writerow([
+            u.get('user_id'),
+            u.get('name'),
+            u.get('phone'),
+            u.get('email'),
+            u.get('pickup'),
+            u.get('registered_at', 'N/A')
+        ])
+        
+    si.seek(0)
+    await message.reply_document(
+        document=io.BytesIO(si.getvalue().encode('utf-8-sig')),
+        filename="members.csv",
+        caption=f"👥 會員名單（共 {len(users)} 人）"
+    )
 
 # --- CSV Export & Blacklist ---
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
