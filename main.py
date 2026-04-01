@@ -1064,6 +1064,84 @@ async def get_bin_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- 拍賣結算邏輯 ---
 
+async def process_settlement_by_date(update: Update, context: ContextTypes.DEFAULT_TYPE, date_str: str):
+    """結算指定日期的訂單"""
+    query = update.callback_query
+    await query.message.edit_text(f"⏳ 正在統計 {date_str} 的訂單並發送帳單...")
+    
+    orders = await store.get_all_orders()
+    
+    # Filter orders by date
+    target_orders = []
+    for o in orders:
+        created_at = o.get('created_at')
+        if isinstance(created_at, str):
+            if created_at.startswith(date_str):
+                target_orders.append(o)
+        elif isinstance(created_at, datetime):
+            if created_at.strftime('%Y-%m-%d') == date_str:
+                target_orders.append(o)
+                
+    if not target_orders:
+        await query.message.edit_text(f"❌ {date_str} 沒有任何訂單。")
+        return
+
+    # Group by User
+    user_orders = {}
+    for o in target_orders:
+        uid = o['user_id']
+        if uid not in user_orders:
+            user_orders[uid] = []
+        user_orders[uid].append(o)
+        
+    # Generate Bill & Send Message
+    success_count = 0
+    fail_count = 0
+    
+    for uid, u_orders in user_orders.items():
+        try:
+            user_info = await store.get_user(uid)
+            if not user_info: continue
+            
+            total_amount = sum(o['price'] for o in u_orders)
+            
+            bill_text = (
+                f"🎉 <b>拍賣結算單</b>\n"
+                f"📅 日期：{date_str}\n"
+                f"━━━━━━━━━━━━━━\n"
+            )
+            
+            for idx, o in enumerate(u_orders, 1):
+                bill_text += f"{idx}. {html.escape(o['item'])} - <b>${o['price']}</b>\n"
+                
+            bill_text += (
+                f"━━━━━━━━━━━━━━\n"
+                f"💰 <b>總金額：HKD ${total_amount}</b>\n\n"
+                f"👤 <b>收件資料</b>：\n"
+                f"• 名稱：{html.escape(user_info['name'])}\n"
+                f"• 電話：{html.escape(user_info['phone'])}\n"
+                f"• 交收：{html.escape(user_info['pickup'])}\n\n"
+                f"請盡快完成付款並回傳截圖，謝謝！"
+            )
+            
+            await context.bot.send_message(chat_id=uid, text=bill_text, parse_mode=ParseMode.HTML)
+            success_count += 1
+            
+        except Exception as e:
+            logger.error(f"Failed to send bill to {uid}: {e}")
+            fail_count += 1
+            
+    # Final Report to Admin
+    await query.message.edit_text(
+        f"✅ <b>結算完成！</b>\n\n"
+        f"📅 日期：{date_str}\n"
+        f"• 總訂單數：{len(target_orders)}\n"
+        f"• 中標人數：{len(user_orders)}\n"
+        f"• 發送成功：{success_count}\n"
+        f"• 發送失敗：{fail_count}",
+        parse_mode=ParseMode.HTML
+    )
+
 async def process_daily_settlement(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.message.edit_text("⏳ 正在統計今日訂單並發送帳單...")
@@ -2242,23 +2320,50 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "admin_end_session":
         if current_auction["active"]:
-            await query.message.edit_text("❌ 請先結束當前進行中的拍賣，再進行當日結算。")
+            await query.message.edit_text("❌ 請先結束當前進行中的拍賣，再進行結算。")
             return
 
+        # Get date options
+        today = datetime.now()
+        yesterday = (today - timedelta(days=1)).strftime('%Y-%m-%d')
+        two_days_ago = (today - timedelta(days=2)).strftime('%Y-%m-%d')
+        today_str = today.strftime('%Y-%m-%d')
+
         keyboard = [
-            [InlineKeyboardButton("✅ 確認結算並發送帳單", callback_data="confirm_end_session")],
+            [InlineKeyboardButton(f"📅 今日 ({today_str})", callback_data="settle_date_" + today_str)],
+            [InlineKeyboardButton(f"📅 昨日 ({yesterday})", callback_data="settle_date_" + yesterday)],
+            [InlineKeyboardButton(f"📅 前日 ({two_days_ago})", callback_data="settle_date_" + two_days_ago)],
             [InlineKeyboardButton("❌ 取消", callback_data="cancel_end_session")]
         ]
         await query.message.edit_text(
-            "⚠️ <b>確認結束當日拍賣會？</b>\n\n"
-            "這將會：\n1. 統計今日所有中標訂單\n2. 按用戶合併訂單\n3. 自動私訊發送總帳單給每位中標者\n\n此操作不可撤銷。",
+            "📅 <b>選擇結算日期</b>\n\n"
+            "請選擇要結算的日期：",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.HTML
         )
         return
 
-    elif query.data == "confirm_end_session":
-        await process_daily_settlement(update, context)
+    elif query.data.startswith("settle_date_"):
+        date_str = query.data.replace("settle_date_", "")
+        # Store date in user_data for processing
+        context.user_data['settle_date'] = date_str
+        
+        # Show confirmation
+        keyboard = [
+            [InlineKeyboardButton("✅ 確認結算並發送帳單", callback_data="confirm_settle_date")],
+            [InlineKeyboardButton("❌ 取消", callback_data="cancel_end_session")]
+        ]
+        await query.message.edit_text(
+            f"⚠️ <b>確認結算 {date_str} 的訂單？</b>\n\n"
+            "這將會：\n1. 統計該日所有中標訂單\n2. 按用戶合併訂單\n3. 自動私訊發送總帳單給每位中標者\n\n此操作不可撤銷。",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    elif query.data == "confirm_settle_date":
+        date_str = context.user_data.get('settle_date', datetime.now().strftime('%Y-%m-%d'))
+        await process_settlement_by_date(update, context, date_str)
         return
 
     elif query.data == "cancel_end_session":
