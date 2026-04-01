@@ -3592,7 +3592,7 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     si = io.StringIO()
     cw = csv.writer(si)
-    cw.writerow(['order_id', 'session_id', 'user_id', 'user_name', 'phone', 'pickup', 'item', 'price', 'status', 'time'])
+    cw.writerow(['order_id', 'session_id', 'user_id', 'user_name', 'phone', 'email', 'pickup', 'item', 'price', 'status', 'time'])
     
     for o in orders:
         uid = o['user_id']
@@ -3604,6 +3604,7 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
             uid, 
             user_info.get('name', 'N/A'),
             user_info.get('phone', 'N/A'),
+            user_info.get('email', 'N/A'),
             user_info.get('pickup', 'N/A'),
             o['item'], 
             o['price'], 
