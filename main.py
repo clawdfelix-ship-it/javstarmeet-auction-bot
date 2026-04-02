@@ -3837,7 +3837,10 @@ async def main():
     )
     
     auction_handler = ConversationHandler(
-        entry_points=[CommandHandler("new_auction", new_auction_start)],
+        entry_points=[
+            CommandHandler("new_auction", new_auction_start),
+            CallbackQueryHandler(new_auction_start, pattern="^admin_add_single$"),
+        ],
         states={
             WAITING_PHOTO: [MessageHandler(filters.PHOTO, get_auction_photo)],
             WAITING_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_auction_title)],
