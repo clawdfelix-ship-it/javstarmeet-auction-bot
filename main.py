@@ -1003,11 +1003,16 @@ async def cancel_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- 管理員上架流程 ---
 async def new_auction_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    message = update.effective_message
     if user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ 權限不足")
+        if update.callback_query:
+            await update.callback_query.answer("⛔ 權限不足", show_alert=True)
+        await message.reply_text("⛔ 權限不足")
         return ConversationHandler.END
     
-    await update.message.reply_text("請發送拍賣品的 <b>圖片</b>：", parse_mode=ParseMode.HTML)
+    if update.callback_query:
+        await update.callback_query.answer()
+    await message.reply_text("請發送拍賣品的 <b>圖片</b>：", parse_mode=ParseMode.HTML)
     return WAITING_PHOTO
 
 async def get_auction_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
