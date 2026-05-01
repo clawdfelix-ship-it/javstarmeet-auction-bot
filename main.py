@@ -1285,7 +1285,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     current_auction["end_time"] = datetime.now().timestamp() + ITEM_DURATION
     current_auction["session_id"] = session_id
     current_auction["session_seq"] = session_seq 
-    current_auction["chat_id"] = target_chat_id
+    current_auction["chat_id"] = int(target_chat_id)
 
     # Get bot username for deep linking
     try:
@@ -1727,14 +1727,21 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = query.from_user
     data = query.data
 
-    if query.message:
-        if query.message.chat_id != current_auction.get("chat_id") or query.message.message_id != current_auction.get("message_id"):
-            await query.answer("⚠️ 呢個按鈕已過期", show_alert=True)
-            return
-
     if not current_auction.get("active"):
         await query.answer("❌ 拍賣已結束", show_alert=True)
         return
+
+    try:
+        auction_chat_id = int(current_auction.get("chat_id"))
+        auction_message_id = int(current_auction.get("message_id"))
+    except Exception:
+        await query.answer("⚠️ 拍賣狀態已重置，請管理員重新開拍賣", show_alert=True)
+        return
+
+    if query.message:
+        if query.message.chat.id != auction_chat_id or query.message.message_id != auction_message_id:
+            await query.answer("⚠️ 呢個按鈕已過期", show_alert=True)
+            return
 
     bin_price = int(current_auction.get("bin_price", 0) or 0)
     if bin_price <= 0:
@@ -2752,6 +2759,7 @@ async def start_auction_from_queue(bot, item):
         return
 
     session_id, session_seq = await store.get_next_session()
+    target_chat_id = int(target_chat_id)
     current_auction["active"] = True
     current_auction["title"] = title
     current_auction["base_price"] = price
@@ -3140,6 +3148,7 @@ async def start_single_batch_item(bot, item):
 
     # Get session
     session_id, session_seq = await store.get_next_session()
+    target_chat_id = int(target_chat_id)
 
     # Reset auction state for new item
     current_auction["active"] = True
@@ -3151,6 +3160,8 @@ async def start_single_batch_item(bot, item):
     current_auction["pending_bidder_name"] = "無"
     current_auction["bidders"] = []
     current_auction["bin_price"] = bin_price
+    current_auction["bin_confirm_user_id"] = None
+    current_auction["bin_confirm_expires_at"] = 0
     current_auction["photo_id"] = photo_id
     current_auction["highest_bidder"] = None
     current_auction["highest_bidder_name"] = "無"
