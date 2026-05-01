@@ -689,6 +689,8 @@ current_auction = {
     "session_seq": 0,
     "bot_username": None,
     "_ending": False,  # Flag: auction is in the process of ending (used to accept late-arriving bids)
+    "bin_confirm_user_id": None,
+    "bin_confirm_expires_at": 0,
 
     # Batch auction state
     "batch_mode": False,           # True when running batch auction
@@ -1274,6 +1276,8 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     current_auction["pending_bidder_name"] = "無"
     current_auction["bidders"] = []
     current_auction["bin_price"] = bin_price
+    current_auction["bin_confirm_user_id"] = None
+    current_auction["bin_confirm_expires_at"] = 0
     current_auction["photo_id"] = photo_id
     current_auction["highest_bidder"] = None
     current_auction["highest_bidder_name"] = "無"
@@ -1547,24 +1551,36 @@ def generate_auction_text(remaining_seconds):
         f"👇 點擊下方按鈕私訊出價！"
     )
 
+def build_bin_confirm_keyboard(bin_price: int, user_id: int):
+    keyboard = [
+        [InlineKeyboardButton(f"✅ 確認買斷 ${bin_price}", callback_data=f"bin_execute_{user_id}")],
+        [InlineKeyboardButton("❌ 取消", callback_data=f"bin_cancel_{user_id}")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 def generate_bid_keyboard(current_price):
-    # 全暗標拍賣：所有出價必須透過私訊，按鈕只提供私訊入口
+    bin_price = int(current_auction.get("bin_price", 0) or 0)
+
+    confirm_uid = current_auction.get("bin_confirm_user_id")
+    confirm_expires_at = float(current_auction.get("bin_confirm_expires_at", 0) or 0)
+    now = datetime.now().timestamp()
+    if confirm_uid and confirm_expires_at and now < confirm_expires_at and bin_price > 0:
+        return build_bin_confirm_keyboard(bin_price, int(confirm_uid))
+    if confirm_uid and confirm_expires_at and now >= confirm_expires_at:
+        current_auction["bin_confirm_user_id"] = None
+        current_auction["bin_confirm_expires_at"] = 0
+
     buttons = []
-    
-    # Add BIN button if set (links to private chat for BIN purchase)
-    bin_price = current_auction.get("bin_price", 0)
+
     if bin_price > 0:
-        bot_username = current_auction.get("bot_username")
-        if bot_username:
-            url = f"https://t.me/{bot_username}?start=bid"
-            buttons.append([InlineKeyboardButton(f"⚡️ 一口價 ${bin_price}", url=url)])
-    
-    # Always add private bid button
+        buttons.append([InlineKeyboardButton(f"⚡️ 一口價 ${bin_price}", callback_data="bin_confirm")])
+
     bot_username = current_auction.get("bot_username")
     if bot_username:
         url = f"https://t.me/{bot_username}?start=bid"
         buttons.append([InlineKeyboardButton("✍️ 點擊私訊出價", url=url)])
-    
+
     return InlineKeyboardMarkup(buttons)
 
 async def auction_timer_loop(bot):
@@ -1705,6 +1721,106 @@ async def handle_private_bid_text(update: Update, context: ContextTypes.DEFAULT_
         f"出價已私密收下，如有更高出價您會收到通知！"
     )
     return ConversationHandler.END
+
+async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    data = query.data
+
+    if query.message:
+        if query.message.chat_id != current_auction.get("chat_id") or query.message.message_id != current_auction.get("message_id"):
+            await query.answer("⚠️ 呢個按鈕已過期", show_alert=True)
+            return
+
+    if not current_auction.get("active"):
+        await query.answer("❌ 拍賣已結束", show_alert=True)
+        return
+
+    bin_price = int(current_auction.get("bin_price", 0) or 0)
+    if bin_price <= 0:
+        await query.answer("❌ 此拍賣未設定一口價", show_alert=True)
+        return
+
+    if data == "bin_confirm":
+        if not await store.is_registered(user.id):
+            await query.answer("⚠️ 請先私訊機器人 /start 完成註冊", show_alert=True)
+            return
+
+        await query.answer(f"⚡️ 一口價 ${bin_price}，請確認", show_alert=True)
+        current_auction["bin_confirm_user_id"] = user.id
+        current_auction["bin_confirm_expires_at"] = datetime.now().timestamp() + 30
+        try:
+            await query.message.edit_reply_markup(reply_markup=build_bin_confirm_keyboard(bin_price, user.id))
+        except Exception as e:
+            logger.warning(f"Failed to show bin confirm keyboard: {e}")
+        return
+
+    if data.startswith("bin_cancel_"):
+        try:
+            confirm_uid = int(data.split("_", 2)[2])
+        except Exception:
+            await query.answer("❌ 無效操作", show_alert=True)
+            return
+
+        if confirm_uid != user.id:
+            await query.answer("⚠️ 呢個確認唔係你開嘅", show_alert=True)
+            return
+
+        await query.answer("已取消", show_alert=False)
+        current_auction["bin_confirm_user_id"] = None
+        current_auction["bin_confirm_expires_at"] = 0
+        try:
+            await query.message.edit_reply_markup(reply_markup=generate_bid_keyboard(current_auction.get("current_price", 0)))
+        except Exception as e:
+            logger.warning(f"Failed to restore bid keyboard: {e}")
+        return
+
+    if data.startswith("bin_execute_"):
+        try:
+            confirm_uid = int(data.split("_", 2)[2])
+        except Exception:
+            await query.answer("❌ 無效操作", show_alert=True)
+            return
+
+        if confirm_uid != user.id:
+            await query.answer("⚠️ 呢個確認唔係你開嘅", show_alert=True)
+            return
+
+        if not await store.is_registered(user.id):
+            await query.answer("⚠️ 請先私訊機器人 /start 完成註冊", show_alert=True)
+            return
+
+        async with auction_lock:
+            if not current_auction.get("active"):
+                await query.answer("❌ 拍賣已結束", show_alert=True)
+                return
+
+            current_auction["bin_confirm_user_id"] = None
+            current_auction["bin_confirm_expires_at"] = 0
+
+            user_info = await store.get_user(user.id)
+            winner_name = (user_info or {}).get("name") or user.first_name or ""
+
+            bidders = current_auction.get("bidders", [])
+            updated = False
+            for b in bidders:
+                if b.get("id") == user.id:
+                    b["name"] = winner_name
+                    b["price"] = bin_price
+                    b["time"] = datetime.now().timestamp()
+                    updated = True
+                    break
+            if not updated:
+                bidders.append({"id": user.id, "name": winner_name, "price": bin_price, "time": datetime.now().timestamp()})
+            current_auction["bidders"] = bidders
+
+            await end_auction_buyout(context.bot, user.id, winner_name, bin_price)
+
+        await query.answer("⚡️ 買斷成功！", show_alert=True)
+        return
+
+    await query.answer("❌ 無效操作", show_alert=True)
+
 
 async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # All inline bid buttons removed - redirect to private chat
@@ -2645,6 +2761,8 @@ async def start_auction_from_queue(bot, item):
     current_auction["pending_bidder_name"] = "無"
     current_auction["bidders"] = []
     current_auction["bin_price"] = bin_price
+    current_auction["bin_confirm_user_id"] = None
+    current_auction["bin_confirm_expires_at"] = 0
     current_auction["photo_id"] = photo_id
     current_auction["highest_bidder"] = None
     current_auction["highest_bidder_name"] = "無"
@@ -2675,6 +2793,108 @@ async def start_auction_from_queue(bot, item):
     )
     current_auction["message_id"] = msg.message_id
     current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(bot))
+
+def truncate_name_prefix(name: str, length: int = 4) -> str:
+    if not name:
+        return ""
+    return name[:length]
+
+
+async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
+    current_auction["_ending"] = True
+    current_auction["bin_confirm_user_id"] = None
+    current_auction["bin_confirm_expires_at"] = 0
+
+    current_auction["active"] = False
+    current_auction["current_price"] = price
+    current_auction["highest_bidder"] = winner_id
+    current_auction["highest_bidder_name"] = winner_name
+
+    timer_task = current_auction.get("timer_task")
+    if timer_task:
+        try:
+            timer_task.cancel()
+        except Exception:
+            pass
+
+    winner_prefix = html.escape(truncate_name_prefix(winner_name, 4))
+    final_text = (
+        f"✅ <b>已成交</b>\n"
+        f"⚡️ <b>${price}</b>\n"
+        f"🏆 得標：{winner_prefix}"
+    )
+
+    try:
+        await bot.edit_message_caption(
+            chat_id=current_auction["chat_id"],
+            message_id=current_auction["message_id"],
+            caption=final_text,
+            reply_markup=None,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        err_str = str(e)
+        logger.warning(f"Failed to edit auction message (buyout): {e}")
+        if "429" in err_str:
+            await asyncio.sleep(5)
+            try:
+                await bot.edit_message_caption(
+                    chat_id=current_auction["chat_id"],
+                    message_id=current_auction["message_id"],
+                    caption=final_text,
+                    reply_markup=None,
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as e2:
+                logger.error(f"Retry also failed (buyout): {e2}")
+
+    title = current_auction.get("title", "")
+    order = {
+        "order_id": f"ORD-{int(datetime.now().timestamp())}",
+        "user_id": winner_id,
+        "item": title,
+        "price": price,
+        "time": datetime.now().isoformat(),
+        "status": "pending",
+        "session_id": current_auction.get("session_id")
+    }
+    await store.add_order(order)
+
+    try:
+        user_info = await store.get_user(winner_id)
+        msg = (
+            f"🎉 <b>買斷成功</b>\n\n"
+            f"商品：<b>{html.escape(title)}</b>\n"
+            f"金額：<b>${price}</b>\n"
+            f"交收：{html.escape(user_info.get('pickup', '未定'))}\n\n"
+            f"拍賣系統會另外再發送付款連結到您的 Email，請留意查收。"
+        )
+        await bot.send_message(chat_id=winner_id, text=msg, parse_mode=ParseMode.HTML)
+
+        user_email = user_info.get('email')
+        if user_email:
+            email_subject = f"買斷通知：{title}"
+            email_body = f"""
+            恭喜您成功買斷 {title}！
+
+            成交價：${price}
+
+            請等待我們發送正式付款連結。
+
+            OpenClaw 拍賣系統
+            """
+            asyncio.create_task(asyncio.to_thread(send_email, user_email, email_subject, email_body))
+    except Exception as e:
+        logger.error(f"Failed to DM winner (buyout): {e}")
+
+    current_auction["_ending"] = False
+    save_auction_state()
+
+    if current_auction.get("batch_mode") and not current_auction.get("batch_abort"):
+        asyncio.create_task(run_batch_auction_loop(bot))
+    else:
+        await start_next_queued_auction(bot)
+
 
 async def end_auction(bot):
     # Issue 1 fix: mark auction as "ending" before releasing lock so that
@@ -3859,6 +4079,7 @@ async def main():
     application.add_handler(auction_handler)
     application.add_handler(CallbackQueryHandler(start_auction_action, pattern="^start_auction_"))
     application.add_handler(CallbackQueryHandler(queue_auction_action, pattern="^queue_auction_"))
+    application.add_handler(CallbackQueryHandler(handle_bin_callback, pattern="^bin_"))
     application.add_handler(CallbackQueryHandler(handle_bid_button, pattern="^bid_"))
     application.add_handler(CallbackQueryHandler(handle_numpad_click, pattern="^numpad_"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
