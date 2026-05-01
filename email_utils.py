@@ -8,22 +8,30 @@ def send_email(to_email, subject, body):
     """
     Uses OpenClaw (gog CLI) to send an email via Gmail.
     """
+    if os.getenv("DISABLE_EMAIL", "").strip().lower() in {"1", "true", "yes", "on"}:
+        logger.info("Email disabled (DISABLE_EMAIL set). Skipping send.")
+        return True
+
     if not to_email or "@" not in to_email:
         logger.warning(f"Invalid email address: {to_email}")
         return False
 
     # Define the environment for the subprocess
     env = os.environ.copy()
-    # Point to the fake_home where credentials are stored
-    env["HOME"] = "/Users/sallychan/Desktop/Clawd Felix/fake_home"
-    # Set the keyring password to unlock credentials without prompt
-    env["GOG_KEYRING_PASSWORD"] = "openclaw-local-dev"
+    gog_home = os.getenv("GOG_HOME")
+    if gog_home:
+        env["HOME"] = gog_home
+    gog_keyring_password = os.getenv("GOG_KEYRING_PASSWORD")
+    if gog_keyring_password:
+        env["GOG_KEYRING_PASSWORD"] = gog_keyring_password
 
+    gog_bin = os.getenv("GOG_BIN", "gog")
+    gog_account = os.getenv("GOG_GMAIL_ACCOUNT", "clawdfelix@gmail.com")
     cmd = [
-        "/usr/local/bin/gog",
+        gog_bin,
         "gmail",
         "send",
-        "--account", "clawdfelix@gmail.com",
+        "--account", gog_account,
         "--to", to_email,
         "--subject", subject,
         "--body", body
