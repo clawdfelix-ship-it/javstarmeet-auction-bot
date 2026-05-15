@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 NAME, PHONE, EMAIL, PICKUP = range(4)
 WAITING_PHOTO, WAITING_TITLE, WAITING_PRICE, WAITING_BIN_PRICE = range(4, 8)
 BIDDING_PRICE = 8
+WAITING_MEMBERS_CSV = 9
 
 # --- Store Class (Async Postgres / JSON) ---
 class Store:
@@ -3792,6 +3793,98 @@ async def export_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption=f"👥 會員名單（共 {len(users)} 人）"
     )
 
+async def cancel_import_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    await message.reply_text("已取消匯入會員。")
+    return ConversationHandler.END
+
+
+async def import_members_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    message = update.effective_message
+    if user.id not in ADMIN_IDS:
+        return ConversationHandler.END
+    if not DATABASE_URL:
+        await message.reply_text("❌ 未設定 DATABASE_URL，無法匯入到資料庫。")
+        return ConversationHandler.END
+
+    await message.reply_text(
+        "請上傳 CSV 檔（欄位必須係：user_id,name,phone,email,pickup）。\n"
+        "如要取消，輸入 /cancel"
+    )
+    return WAITING_MEMBERS_CSV
+
+
+async def import_members_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    message = update.effective_message
+    if user.id not in ADMIN_IDS:
+        return ConversationHandler.END
+
+    doc = update.message.document if update.message else None
+    if not doc or not (doc.file_name or "").lower().endswith(".csv"):
+        await message.reply_text("❌ 請上傳 .csv 檔案。")
+        return WAITING_MEMBERS_CSV
+
+    try:
+        tg_file = await context.bot.get_file(doc.file_id)
+        data = await tg_file.download_as_bytearray()
+    except Exception as e:
+        await message.reply_text(f"❌ 下載檔案失敗：{e}")
+        return ConversationHandler.END
+
+    try:
+        text = bytes(data).decode("utf-8-sig")
+    except Exception:
+        text = bytes(data).decode("utf-8", errors="replace")
+
+    reader = csv.DictReader(io.StringIO(text))
+    required = {"user_id", "name", "phone", "email", "pickup"}
+    if not reader.fieldnames or not required.issubset(set(h.strip() for h in reader.fieldnames if h)):
+        await message.reply_text("❌ CSV 欄位唔正確，必須包含：user_id,name,phone,email,pickup")
+        return ConversationHandler.END
+
+    ok = 0
+    skipped = 0
+    bad_rows = []
+
+    for idx, row in enumerate(reader, start=2):
+        uid_raw = (row.get("user_id") or "").strip()
+        name = (row.get("name") or "").strip()
+        phone = (row.get("phone") or "").strip()
+        email = (row.get("email") or "").strip()
+        pickup = (row.get("pickup") or "").strip() or "旺角店自取"
+
+        try:
+            uid = int(uid_raw)
+        except Exception:
+            skipped += 1
+            bad_rows.append((idx, "invalid user_id"))
+            continue
+
+        if not name or not phone:
+            skipped += 1
+            bad_rows.append((idx, "missing name/phone"))
+            continue
+
+        info = {"name": name, "phone": phone, "email": email, "pickup": pickup}
+        try:
+            await store.register_user(uid, info)
+            ok += 1
+        except Exception as e:
+            skipped += 1
+            bad_rows.append((idx, f"db error: {e}"))
+
+    summary = f"✅ 匯入完成：{ok} 筆\n❌ 略過：{skipped} 筆"
+    if bad_rows:
+        preview = "\n".join(f"第 {ln} 行：{reason}" for ln, reason in bad_rows[:15])
+        if len(bad_rows) > 15:
+            preview += f"\n… 另外仲有 {len(bad_rows)-15} 筆"
+        summary += f"\n\n{preview}"
+
+    await message.reply_text(summary)
+    return ConversationHandler.END
+
 # --- CSV Export & Blacklist ---
 async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -4086,8 +4179,17 @@ async def main():
         fallbacks=[CommandHandler("cancel", cancel_register)],
     )
 
+    import_members_handler = ConversationHandler(
+        entry_points=[CommandHandler("import_members", import_members_start)],
+        states={
+            WAITING_MEMBERS_CSV: [MessageHandler(filters.Document.ALL, import_members_receive)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_import_members)],
+    )
+
     application.add_handler(reg_handler)
     application.add_handler(auction_handler)
+    application.add_handler(import_members_handler)
     application.add_handler(CallbackQueryHandler(start_auction_action, pattern="^start_auction_"))
     application.add_handler(CallbackQueryHandler(queue_auction_action, pattern="^queue_auction_"))
     application.add_handler(CallbackQueryHandler(handle_bin_callback, pattern="^bin_"))
