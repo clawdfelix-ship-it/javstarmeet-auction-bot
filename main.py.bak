@@ -1884,7 +1884,7 @@ def build_admin_keyboard():
             InlineKeyboardButton("📊 拍賣狀態", callback_data="admin_batch_status"),
             InlineKeyboardButton("📢 廣播通知", callback_data="admin_broadcast"),
             InlineKeyboardButton("📤 匯出訂單", callback_data="admin_export"),
-            InlineKeyboardButton("👥 匯出會員", callback_data="admin_export_members"),
+            InlineKeyboardButton("👥 匯出會員", callback_data="export_members"),
         ],
         # ⚙️ Settings section
         [
@@ -2376,7 +2376,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await export_data(update, context)
         return
 
-    elif query.data == "admin_export_members":
+    elif query.data == "export_members":
         await export_members(update, context)
         return
 
@@ -3857,11 +3857,9 @@ async def main():
     application.add_handler(CallbackQueryHandler(handle_bid_button, pattern="^bid_"))
     application.add_handler(CallbackQueryHandler(handle_numpad_click, pattern="^numpad_"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
-    application.add_handler(CallbackQueryHandler(admin_callback, pattern="^settle_date_"))
-    application.add_handler(CallbackQueryHandler(process_daily_settlement, pattern="^confirm_settle_date$"))
+    application.add_handler(CallbackQueryHandler(process_daily_settlement, pattern="^confirm_end_session$"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^cancel_end_session$"))
     application.add_handler(CallbackQueryHandler(handle_batch_callback, pattern="^batch_"))
-    application.add_handler(CallbackQueryHandler(admin_callback, pattern="^adm_ord_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_text))
     application.add_handler(CommandHandler("export", export_data))
     application.add_handler(CommandHandler("ban", ban_command))
