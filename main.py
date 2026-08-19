@@ -805,8 +805,7 @@ async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return ConversationHandler.END
                 
             await update.message.reply_text(
-                f"🔥 <b>正在拍賣：{html.escape(current_auction['title'])}</b>\n"
-                f"💰 當前最高暗標價：${current_auction['pending_price']}\n\n"
+                f"🔥 <b>正在拍賣：{html.escape(current_auction['title'])}</b>\n\n"
                 f"請輸入您的 <b>出價金額</b> (純數字)：",
                 parse_mode=ParseMode.HTML
             )
