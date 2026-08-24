@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from store import create_store
 import asyncio
 from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text, ITEM_DURATION, PAUSE_BETWEEN_ITEMS
+from core.handlers import build_registration_handlers
 from core.text import generate_auction_text, build_bin_confirm_keyboard, generate_bid_keyboard, truncate_name_prefix, generate_numpad_keyboard
 
 # Telegram
@@ -57,249 +58,6 @@ BATCH_PANEL_MESSAGE_ID = None  # chat_id, message_id of the admin panel
 BATCH_PANEL_CHAT_ID = None
 
 
-# --- 註冊流程 ---
-async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    is_edit = False
-    
-    # Check if this is from "edit_profile" callback
-    if update.callback_query:
-        await update.callback_query.answer()
-        if update.callback_query.data == "edit_profile":
-            is_edit = True
-    
-    # Check for deep linking parameters (bidding)
-    if not is_edit and context.args:
-        arg = context.args[0]
-        
-        if arg == 'bid':
-            if not await store.is_registered(user.id):
-                 await update.message.reply_text("⚠️ 請先完成註冊才能出價！\n請輸入您的 <b>稱呼 (Name)</b>：", parse_mode=ParseMode.HTML)
-                 return NAME
-
-            # Strict mode: check profile completeness
-            user_info = await store.get_user(user.id)
-            missing = []
-            if not user_info.get('name'):
-                missing.append('稱呼')
-            if not user_info.get('phone'):
-                missing.append('電話')
-            if not user_info.get('email'):
-                missing.append('Email')
-            if not user_info.get('pickup'):
-                missing.append('交收地點')
-
-            if missing:
-                await update.message.reply_text(
-                    f"⚠️ 請先補全以下資料才能出價：\n" +
-                    "\n".join(f"- {m}" for m in missing) +
-                    "\n\n請點擊 /start 更新資料",
-                    parse_mode=ParseMode.HTML
-                )
-                return ConversationHandler.END
-
-            # If registered, start bidding flow
-            if not current_auction["active"]:
-                await update.message.reply_text("❌ 當前沒有進行中的拍賣。")
-                return ConversationHandler.END
-                
-            await update.message.reply_text(
-                f"🔥 <b>正在拍賣：{html.escape(current_auction['title'])}</b>\n\n"
-                f"請輸入您的 <b>出價金額</b> (純數字)：",
-                parse_mode=ParseMode.HTML
-            )
-            return BIDDING_PRICE
-
-        elif arg == 'bid_webapp':
-            if not await store.is_registered(user.id):
-                 await update.message.reply_text("⚠️ 請先完成註冊才能出價！\n請輸入您的 <b>稱呼 (Name)</b>：", parse_mode=ParseMode.HTML)
-                 return NAME
-
-            # Strict mode: check profile completeness
-            user_info = await store.get_user(user.id)
-            missing = []
-            if not user_info.get('name'):
-                missing.append('稱呼')
-            if not user_info.get('phone'):
-                missing.append('電話')
-            if not user_info.get('email'):
-                missing.append('Email')
-            if not user_info.get('pickup'):
-                missing.append('交收地點')
-
-            if missing:
-                await update.message.reply_text(
-                    f"⚠️ 請先補全以下資料才能出價：\n" +
-                    "\n".join(f"- {m}" for m in missing) +
-                    "\n\n請點擊 /start 更新資料",
-                    parse_mode=ParseMode.HTML
-                )
-                return ConversationHandler.END
-                 
-            if not current_auction["active"]:
-                await update.message.reply_text("❌ 當前沒有進行中的拍賣。")
-                return ConversationHandler.END
-
-            webapp_url = os.getenv("WEBAPP_URL")
-            if not webapp_url:
-                 await update.message.reply_text("⚠️ 系統未配置 WebApp，請使用傳統出價方式。")
-                 return ConversationHandler.END
-                 
-            if not webapp_url.startswith("https://"):
-                webapp_url = f"https://{webapp_url}"
-                
-            from telegram import WebAppInfo
-            keyboard = [[InlineKeyboardButton("✍️ 開啟出價頁面", web_app=WebAppInfo(url=webapp_url))]]
-            await update.message.reply_text(
-                "👇 請點擊下方按鈕開啟出價視窗：",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return ConversationHandler.END
-
-    # 定義快捷選單
-    menu_keyboard = [['📜 拍賣規則', '👤 我的資料'], ['📍 取貨地址']]
-    if user.id in ADMIN_IDS:
-        menu_keyboard.append(['🔧 管理員選單'])
-    
-    reply_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
-
-    if not is_edit and await store.is_registered(user.id):
-        await update.message.reply_text(
-            "✅ 您已經註冊過了，可以直接參與競拍！\n您可以點擊下方按鈕查看規則或個人資料。",
-            reply_markup=reply_markup
-        )
-        return ConversationHandler.END
-    
-    # Check completeness for returning users (not editing)
-    if not is_edit and await store.is_registered(user.id):
-        user_info = await store.get_user(user.id)
-        missing = []
-        if not user_info.get('name'):
-            missing.append('稱呼')
-        if not user_info.get('phone'):
-            missing.append('電話')
-        if not user_info.get('email'):
-            missing.append('Email')
-        if not user_info.get('pickup'):
-            missing.append('交收地點')
-
-        if missing:
-            # Incomplete profile → force edit mode
-            is_edit = True
-
-    msg_text = "👋 歡迎來到極速拍賣機器人！\n為了確保交易順利，請先完成簡單的登記。\n\n請輸入您的 <b>稱呼 (Name)</b>："
-    if is_edit:
-        # Prefill with existing values
-        existing_info = await store.get_user(user.id)
-        existing_name = existing_info.get('name', '') if existing_info else ''
-        existing_phone = existing_info.get('phone', '') if existing_info else ''
-        existing_email = existing_info.get('email', '') if existing_info else ''
-        existing_pickup = existing_info.get('pickup', '') if existing_info else ''
-
-        # Store existing values for potential use
-        context.user_data['reg_name'] = existing_name
-        context.user_data['reg_phone'] = existing_phone
-        context.user_data['reg_email'] = existing_email
-        context.user_data['reg_pickup'] = existing_pickup
-
-        prefilled_note = ""
-        if existing_name or existing_phone or existing_email or existing_pickup:
-            prefilled_note = f"\n\n📋 現有資料：\n" \
-                f"稱呼：{html.escape(existing_name) or '未填'}\n" \
-                f"電話：{html.escape(existing_phone) or '未填'}\n" \
-                f"Email：{html.escape(existing_email) or '未填'}\n" \
-                f"交收：{html.escape(existing_pickup) or '未填'}\n" \
-                f"\n直接輸入新值可更新，或回覆「skip」保留現有值"
-
-        msg_text = f"✏️ <b>補全 / 修改資料</b>{prefilled_note}\n\n請輸入您的 <b>稱呼 (Name)</b>："
-
-    if update.callback_query:
-         await update.callback_query.message.reply_text(msg_text, parse_mode=ParseMode.HTML)
-    else:
-         await update.message.reply_text(msg_text, parse_mode=ParseMode.HTML)
-         
-    return NAME
-
-async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    # Support "skip" to keep existing value
-    if text.lower() == 'skip' and context.user_data.get('reg_name'):
-        pass  # keep existing
-    else:
-        context.user_data['reg_name'] = text
-    await update.message.reply_text("✅ 收到。請輸入您的 <b>電話號碼</b> (例如 91234567)：", parse_mode=ParseMode.HTML)
-    return PHONE
-
-async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text.lower() == 'skip' and context.user_data.get('reg_phone'):
-        pass  # keep existing
-    else:
-        context.user_data['reg_phone'] = text
-    await update.message.reply_text("✅ 收到。請輸入您的 <b>Email</b> (用於得標通知)：", parse_mode=ParseMode.HTML)
-    return EMAIL
-
-async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    import re
-    text = update.message.text.strip()
-    if text.lower() == 'skip' and context.user_data.get('reg_email'):
-        pass  # keep existing
-    else:
-        # Validate email format
-        email_pattern = r'^[\w\.\-]+@[\w\.\-]+\.\w+$'
-        if not re.match(email_pattern, text):
-            await update.message.reply_text(
-                "⚠️ Email 格式不正確，請重新輸入：",
-                parse_mode=ParseMode.HTML
-            )
-            return EMAIL
-        context.user_data['reg_email'] = text
-
-    keyboard = [['旺角店自取']]
-    await update.message.reply_text(
-        "✅ 收到。請選擇 <b>交收地點</b>：",
-        parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-    )
-    return PICKUP
-
-async def get_pickup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    # Support "skip" to keep existing value
-    if text.lower() == 'skip' and context.user_data.get('reg_pickup'):
-        pass  # keep existing
-    elif text in ['旺角店自取']:
-        context.user_data['reg_pickup'] = text
-    else:
-        await update.message.reply_text("⚠️ 請選擇有效的選項 (旺角店自取)，或輸入「skip」保留現有值。")
-        return PICKUP
-    
-    # 保存資料
-    user = update.effective_user
-    info = {
-        "name": context.user_data['reg_name'],
-        "phone": context.user_data['reg_phone'],
-        "email": context.user_data['reg_email'],
-        "pickup": context.user_data['reg_pickup']
-    }
-    await store.register_user(user.id, info)
-    
-    # 恢復主菜單
-    menu_keyboard = [['📜 拍賣規則', '👤 我的資料'], ['📍 取貨地址']]
-    if user.id in ADMIN_IDS:
-        menu_keyboard.append(['🔧 管理員選單'])
-    reply_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
-    
-    await update.message.reply_text(
-        "門市地址：旺角西洋菜南街72號3樓（OK右手邊門口上）\n營業時間 :星期一 至 星期六\n星期日休息\n\n🎉 <b>註冊成功！</b>\n現在您可以參與所有拍賣活動了。",
-        parse_mode=ParseMode.HTML,
-        reply_markup=reply_markup
-    )
-    return ConversationHandler.END
-
-async def cancel_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("註冊已取消。", reply_markup=ReplyKeyboardRemove())
-    return ConversationHandler.END
 
 # --- 管理員上架流程 ---
 async def new_auction_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3279,20 +3037,22 @@ async def main():
     # 設置 Bot
     application = Application.builder().token(TOKEN).build()
 
-    # 註冊處理器
+    # 註冊處理器（遷移到 core/handlers.py）
+    _reg_fns = build_registration_handlers(store, current_auction, ADMIN_IDS)
+    _start_reg, _get_name, _get_phone, _get_email, _get_pickup, _cancel_reg = _reg_fns
     reg_handler = ConversationHandler(
         entry_points=[
-            CommandHandler("start", start_register),
-            CallbackQueryHandler(start_register, pattern="^edit_profile$")
+            CommandHandler("start", _start_reg),
+            CallbackQueryHandler(_start_reg, pattern="^edit_profile$")
         ],
         states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)],
-            PICKUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_pickup)],
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_name)],
+            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_phone)],
+            EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_email)],
+            PICKUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_pickup)],
             BIDDING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_bid_text)],
         },
-        fallbacks=[CommandHandler("cancel", cancel_register)],
+        fallbacks=[CommandHandler("cancel", _cancel_reg)],
     )
     
     auction_handler = ConversationHandler(
