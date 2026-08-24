@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from email_utils import send_email
 from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text
+from core.text import generate_auction_text, build_bin_confirm_keyboard, generate_bid_keyboard, truncate_name_prefix
 
 # Telegram
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ForceReply
@@ -1376,71 +1377,6 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             logger.warning(f"Failed to send numpad bid confirmation: {e}")
         return
 
-def generate_auction_text(remaining_seconds):
-    title = html.escape(current_auction["title"])
-    # 暗標模式：拍賣進行中顯示起標價，結標後顯示實際成交價
-    if current_auction["active"]:
-        # Auction in progress - show base/opening price (blind)
-        price = current_auction["base_price"]
-    else:
-        # Auction ended - reveal actual price
-        price = current_auction["current_price"]
-    # 永遠隱藏出價者資訊 (暗標)
-    bidder = "㊙️ (匿名暗標)"
-    
-    seq = current_auction.get("session_seq", "?")
-    
-    bin_price = current_auction.get("bin_price", 0)
-    bin_text = f"\n⚡️ 一口價：<b>${bin_price}</b>" if bin_price > 0 else ""
-    
-    if remaining_seconds <= 0:
-        time_str = "00:00"
-    else:
-        mins, secs = divmod(int(remaining_seconds), 60)
-        time_str = f"{mins:02}:{secs:02}"
-        
-    return (
-        f"🔥 <b>正在拍賣：{title}</b> (第 {seq} 場 - 匿名暗標)\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"💰 當前價格：<b>${price}</b>{bin_text}\n"
-        f"👑 最高出價：{bidder}\n"
-        f"⏱️ 剩餘時間：<b>{time_str}</b>\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"👇 點擊下方按鈕私訊出價！"
-    )
-
-def build_bin_confirm_keyboard(bin_price: int, user_id: int):
-    keyboard = [
-        [InlineKeyboardButton(f"✅ 確認買斷 ${bin_price}", callback_data=f"bin_execute_{user_id}")],
-        [InlineKeyboardButton("❌ 取消", callback_data=f"bin_cancel_{user_id}")],
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-
-def generate_bid_keyboard(current_price):
-    bin_price = int(current_auction.get("bin_price", 0) or 0)
-
-    confirm_uid = current_auction.get("bin_confirm_user_id")
-    confirm_expires_at = float(current_auction.get("bin_confirm_expires_at", 0) or 0)
-    now = datetime.now().timestamp()
-    if confirm_uid and confirm_expires_at and now < confirm_expires_at and bin_price > 0:
-        return build_bin_confirm_keyboard(bin_price, int(confirm_uid))
-    if confirm_uid and confirm_expires_at and now >= confirm_expires_at:
-        current_auction["bin_confirm_user_id"] = None
-        current_auction["bin_confirm_expires_at"] = 0
-
-    buttons = []
-
-    if bin_price > 0:
-        buttons.append([InlineKeyboardButton(f"⚡️ 一口價 ${bin_price}", callback_data="bin_confirm")])
-
-    bot_username = current_auction.get("bot_username")
-    if bot_username:
-        url = f"https://t.me/{bot_username}?start=bid"
-        buttons.append([InlineKeyboardButton("✍️ 點擊私訊出價", url=url)])
-
-    return InlineKeyboardMarkup(buttons)
-
 async def auction_timer_loop(bot):
     last_update_time = 0
     event = current_auction["update_event"]
@@ -2660,12 +2596,6 @@ async def start_auction_from_queue(bot, item):
     )
     current_auction["message_id"] = msg.message_id
     current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(bot))
-
-def truncate_name_prefix(name: str, length: int = 4) -> str:
-    if not name:
-        return ""
-    return name[:length]
-
 
 async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
     current_auction["_ending"] = True
