@@ -2695,7 +2695,7 @@ async def run_web_server():
     await site.start()
     logger.info("Web server started on port 8080")
 
-async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE, _store):
     # Handle data received from WebApp
     if not auction_engine.state.active:
         return
@@ -2714,7 +2714,7 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass  # Silent ignore
     
     # Check registration
-    if not await store.is_registered(user.id):
+    if not await _store.is_registered(user.id):
         # Maybe send a private message to register?
         return
 
@@ -2830,7 +2830,7 @@ async def main():
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     
     # WebApp Data Handler
-    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_bid))
+    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, lambda u, c: handle_webapp_bid(u, c, store)))
 
     # 啟動 Bot
     # 使用 drop_pending_updates 防止舊消息干擾
