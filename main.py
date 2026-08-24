@@ -540,6 +540,15 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.answer("⚠️ 呢個確認唔係你開嘅", show_alert=True)
             return
 
+        # 🟡 Fix: check if bin confirm has expired
+        now = datetime.now().timestamp()
+        confirm_expires_at = current_auction.get("bin_confirm_expires_at", 0)
+        if confirm_expires_at and now >= confirm_expires_at:
+            current_auction["bin_confirm_user_id"] = None
+            current_auction["bin_confirm_expires_at"] = 0
+            await query.answer("⚠️ 確認已過期，請重新點擊一口價", show_alert=True)
+            return
+
         if not await store.is_registered(user.id):
             await query.answer("⚠️ 請先私訊機器人 /start 完成註冊", show_alert=True)
             return
