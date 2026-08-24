@@ -71,7 +71,7 @@ auction_engine: "AuctionEngine" = None  # type: ignore
 async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
+
     if query.from_user.id not in ADMIN_IDS:
         return
 
@@ -83,7 +83,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     price = context.user_data.get('auc_price', 0)
     bin_price = context.user_data.get('auc_bin_price', 0)
     photo_id = context.user_data.get('auc_photo')
-    
+
     if not photo_id:
         await query.edit_message_caption("❌ 數據丟失，請重新上架。")
         return
@@ -95,71 +95,80 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
         target_type = "測試"
     else:
         target_chat_id = await store.get_config("prod_group_id")
-        # Fallback to old 'group_id' if prod not set
         if not target_chat_id:
             target_chat_id = await store.get_config("group_id")
-            
+
     if not target_chat_id:
         await query.edit_message_caption(f"❌ 尚未設定【{target_type}群組】！\n請先在目標群組輸入 /set_{'test_' if target_type=='測試' else 'prod_'}group")
         return
 
-    # 初始化拍賣
-    session_id, session_seq = await store.get_next_session()
-    current_auction["active"] = True
-    current_auction["title"] = title
-    current_auction["base_price"] = price
-    current_auction["current_price"] = price
-    current_auction["pending_price"] = price   # 暗標：pending = base price initially
-    current_auction["pending_bidder"] = None
-    current_auction["pending_bidder_name"] = "無"
-    current_auction["bidders"] = []
-    current_auction["bin_price"] = bin_price
-    current_auction["bin_confirm_user_id"] = None
-    current_auction["bin_confirm_expires_at"] = 0
-    current_auction["photo_id"] = photo_id
-    current_auction["highest_bidder"] = None
-    current_auction["highest_bidder_name"] = "無"
-    current_auction["start_time"] = datetime.now()
-    current_auction["end_time"] = datetime.now().timestamp() + ITEM_DURATION
-    current_auction["session_id"] = session_id
-    current_auction["session_seq"] = session_seq 
-    current_auction["chat_id"] = int(target_chat_id)
+    # Delegate state init to AuctionEngine
+    await auction_engine.start_auction(title, photo_id, price, bin_price, int(target_chat_id))
+
+    # Sync engine state to current_auction for display/handlers
+    state = auction_engine.state
+    current_auction["active"] = state.active
+    current_auction["title"] = state.title
+    current_auction["base_price"] = state.base_price
+    current_auction["current_price"] = state.current_price
+    current_auction["pending_price"] = state.pending_price
+    current_auction["pending_bidder"] = state.pending_bidder
+    current_auction["pending_bidder_name"] = state.pending_bidder_name
+    current_auction["bidders"] = state.bidders
+    current_auction["bin_price"] = state.bin_price
+    current_auction["bin_confirm_user_id"] = state.bin_confirm_user_id
+    current_auction["bin_confirm_expires_at"] = state.bin_confirm_expires_at
+    current_auction["photo_id"] = state.photo_id
+    current_auction["highest_bidder"] = state.highest_bidder
+    current_auction["highest_bidder_name"] = state.highest_bidder_name
+    current_auction["start_time"] = state.start_time
+    current_auction["end_time"] = state.end_time
+    current_auction["session_id"] = state.session_id
+    current_auction["session_seq"] = state.session_seq
+    current_auction["chat_id"] = state.chat_id
+    current_auction["update_event"] = state.update_event
 
     # Get bot username for deep linking
     try:
         me = await context.bot.get_me()
         current_auction["bot_username"] = me.username
+        state.bot_username = me.username
     except Exception as e:
         logger.error(f"Failed to get bot info: {e}")
 
-    text = generate_auction_text(ITEM_DURATION)
+    text = generate_auction_text(auction_engine.get_item_duration())
     keyboard = generate_bid_keyboard(price)
-    
+
     await query.delete_message()
-    
+
     try:
         msg = await context.bot.send_photo(
             chat_id=target_chat_id,
             photo=photo_id,
             caption=text,
             reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
+            parse_mode="HTML"
         )
         current_auction["message_id"] = msg.message_id
-        current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(context.bot))
-        
-        # Admin feedback
+        state.message_id = msg.message_id
+        timer_task = asyncio.create_task(auction_timer_loop(context.bot))
+        current_auction["timer_task"] = timer_task
+        state.timer_task = timer_task
+        auction_engine.set_timer_task(timer_task)
+
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=f"✅ 拍賣已發布到【{target_type}群組】！"
         )
     except Exception as e:
         logger.error(f"Failed to start auction: {e}")
+        current_auction["active"] = False
+        state.active = False
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=f"❌ 發布失敗：{e}\n請檢查機器人是否在該群組且有發言權限。"
         )
-        current_auction["active"] = False
+
 
 async def queue_auction_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
