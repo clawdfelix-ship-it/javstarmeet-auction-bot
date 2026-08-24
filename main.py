@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from store import create_store
 import asyncio
-from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text, ITEM_DURATION, PAUSE_BETWEEN_ITEMS, batch_state
+from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text, ITEM_DURATION, PAUSE_BETWEEN_ITEMS, batch_state, handle_batch_callback
 from core.handlers import build_registration_handlers
 from core.admin import build_admin_handlers
 from core.settlement import process_settlement_by_date as _settle_by_date
@@ -2749,6 +2749,7 @@ async def main():
     await store.connect()
 
     # 初始化 AuctionEngine（逐漸接管 current_auction 全局 dict）
+    global auction_engine
     auction_engine = AuctionEngine(store, ITEM_DURATION)
 
     # 啟動 Web Server (為了 Zeabur 保持活躍)
