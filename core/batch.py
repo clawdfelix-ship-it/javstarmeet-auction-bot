@@ -3,7 +3,8 @@ import asyncio
 import html
 import logging
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 

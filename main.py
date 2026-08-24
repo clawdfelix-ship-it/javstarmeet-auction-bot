@@ -12,7 +12,7 @@ import asyncio
 from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text, ITEM_DURATION, PAUSE_BETWEEN_ITEMS, batch_state
 from core.handlers import build_registration_handlers
 from core.admin import build_admin_handlers
-from core.settlement import process_settlement_by_date as _settle_by_date, process_daily_settlement as _settle_daily
+from core.settlement import process_settlement_by_date as _settle_by_date
 from core.auction import AuctionEngine
 from core.text import generate_auction_text, build_bin_confirm_keyboard, generate_bid_keyboard, truncate_name_prefix, generate_numpad_keyboard
 
