@@ -13,6 +13,7 @@ from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_
 from core.handlers import build_registration_handlers
 from core.admin import build_admin_handlers
 from core.settlement import process_settlement_by_date as _settle_by_date, process_daily_settlement as _settle_daily
+from core.auction import AuctionEngine
 from core.text import generate_auction_text, build_bin_confirm_keyboard, generate_bid_keyboard, truncate_name_prefix, generate_numpad_keyboard
 
 # Telegram
@@ -61,6 +62,9 @@ BATCH_PANEL_CHAT_ID = None
 
 # --- Global Auction State (legacy — gradually migrating to AuctionEngine) ---
 current_auction: dict = {}
+
+# AuctionEngine instance (initialized in main(), used by module-level handlers)
+auction_engine: "AuctionEngine" = None  # type: ignore
 
 # --- 拍賣核心邏輯 ---
 
@@ -1392,45 +1396,34 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Failed to delete bid text message")
 
 async def process_blind_bid(user, price, query=None, bot=None):
-    # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
-    # 每人只能出一次價，價錢任意，最後 reveal 時價高者得
-
+    """Delegate to AuctionEngine.process_bid() — the single source of truth for bid logic."""
     # 🔴 Block blacklisted users
     if await store.is_blacklisted(user.id):
         if query:
             await query.answer("🚫 您已被禁止參與拍賣。", show_alert=True)
         return
 
-    # Issue 1 fix: if auction is in the process of ending (end_auction running),
-    # extend time by 2s to accept the bid rather than rejecting it outright.
-    if current_auction.get("_ending"):
-        current_auction["end_time"] = datetime.now().timestamp() + 2
-        logger.info(f"Late bid accepted; auction extended by 2s (user {user.id})")
+    result = await auction_engine.process_bid(user.id, price, user.first_name, bot)
 
-    existing_bids = current_auction.get("bidders", [])
-    if any(b["id"] == user.id for b in existing_bids):
-        if query: await query.answer("❌ 你已經出過價了", show_alert=True)
+    if result["action"] == "error":
+        if query:
+            await query.answer(result["message"], show_alert=True)
         return
 
-    # Store as pending (not yet public) and track bidder
-    current_auction["pending_price"] = price
-    current_auction["pending_bidder"] = user.id
-    current_auction["pending_bidder_name"] = user.first_name
-    current_auction["bidders"].append({"id": user.id, "name": user.first_name, "price": price, "time": datetime.now().timestamp()})
-
-    # Check Buy It Now
-    bin_price = current_auction.get("bin_price", 0)
-    if bin_price > 0 and price >= bin_price:
-        # End auction immediately
-        current_auction["end_time"] = datetime.now().timestamp()
-        if current_auction.get("timer_task"):
-            current_auction["timer_task"].cancel()
+    if result["action"] == "buyout":
         target_bot = bot if bot else (query.bot if query else None)
         if target_bot:
             await end_auction(target_bot)
         if query:
-            await query.answer(f"⚡️ 一口價成交！恭喜您！", show_alert=True)
+            await query.answer("⚡️ 一口價成交！恭喜您！", show_alert=True)
         return
+
+    # accepted — sync engine state back to current_auction for display callers
+    state = auction_engine.state
+    current_auction["pending_price"] = state.pending_price
+    current_auction["pending_bidder"] = state.pending_bidder
+    current_auction["pending_bidder_name"] = state.pending_bidder_name
+    current_auction["bidders"] = state.bidders
 
 async def notify_previous_bidder(bot, previous_bidder_id, title, new_price, new_bidder_name):
     try:
@@ -1529,14 +1522,18 @@ async def start_auction_from_queue(bot, item):
     current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(bot))
 
 async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
-    current_auction["_ending"] = True
+    """Execute buyout — delegate state management to AuctionEngine."""
+    await auction_engine.confirm_buyout(winner_id, winner_name, price)
+
+    # Sync engine state back to current_auction
+    state = auction_engine.state
+    current_auction["_ending"] = state._ending
+    current_auction["active"] = state.active
+    current_auction["current_price"] = state.current_price
+    current_auction["highest_bidder"] = state.highest_bidder
+    current_auction["highest_bidder_name"] = state.highest_bidder_name
     current_auction["bin_confirm_user_id"] = None
     current_auction["bin_confirm_expires_at"] = 0
-
-    current_auction["active"] = False
-    current_auction["current_price"] = price
-    current_auction["highest_bidder"] = winner_id
-    current_auction["highest_bidder_name"] = winner_name
 
     timer_task = current_auction.get("timer_task")
     if timer_task:
@@ -1545,6 +1542,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
         except Exception:
             logger.exception("Failed to cancel timer task")
 
+    title = state.title
     winner_prefix = html.escape(truncate_name_prefix(winner_name, 4))
     final_text = (
         f"✅ <b>已成交</b>\n"
@@ -1558,7 +1556,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
             message_id=current_auction["message_id"],
             caption=final_text,
             reply_markup=None,
-            parse_mode=ParseMode.HTML
+            parse_mode="HTML"
         )
     except Exception as e:
         err_str = str(e)
@@ -1571,12 +1569,11 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
                     message_id=current_auction["message_id"],
                     caption=final_text,
                     reply_markup=None,
-                    parse_mode=ParseMode.HTML
+                    parse_mode="HTML"
                 )
             except Exception as e2:
                 logger.error(f"Retry also failed (buyout): {e2}")
 
-    title = current_auction.get("title", "")
     order = {
         "order_id": f"ORD-{int(datetime.now().timestamp())}",
         "user_id": winner_id,
@@ -1597,8 +1594,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
             f"交收：{html.escape(user_info.get('pickup', '未定'))}\n\n"
             f"拍賣系統會另外再發送付款連結到您的 Email，請留意查收。"
         )
-        await bot.send_message(chat_id=winner_id, text=msg, parse_mode=ParseMode.HTML)
-
+        await bot.send_message(chat_id=winner_id, text=msg, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Failed to DM winner (buyout): {e}")
 
@@ -1611,30 +1607,22 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
 
 
 async def end_auction(bot):
-    # Issue 1 fix: mark auction as "ending" before releasing lock so that
-    # process_blind_bid can detect it and extend time instead of rejecting.
-    current_auction["_ending"] = True
+    """Delegate to AuctionEngine.end_auction() for state, then handle UI + orders."""
+    result = await auction_engine.end_auction(bot)
 
-    bidders = current_auction.get("bidders", [])
-    # Sort by price descending, then by time ascending (tie = earliest wins)
-    sorted_bidders = sorted(bidders, key=lambda x: (-x["price"], x.get("time", 0)))
+    winner_id = result["winner_id"]
+    winner_name = result["winner_name"]
+    price = result["price"]
+    sorted_bidders = result["sorted_bidders"]
+    state = auction_engine.state
+    title = state.title
 
-    # Determine winner: highest bidder (first in sorted list)
-    if sorted_bidders:
-        winner = sorted_bidders[0]
-        winner_id = winner["id"]
-        winner_name = winner["name"]
-        price = winner["price"]
-    else:
-        winner_id = None
-        winner_name = "無"
-        price = 0
-
-    current_auction["active"] = False
-    current_auction["current_price"] = price
-    current_auction["highest_bidder"] = winner_id
-    current_auction["highest_bidder_name"] = winner_name
-    title = current_auction["title"]
+    # Sync engine state back to current_auction for display
+    current_auction["active"] = state.active
+    current_auction["current_price"] = state.current_price
+    current_auction["highest_bidder"] = state.highest_bidder
+    current_auction["highest_bidder_name"] = state.highest_bidder_name
+    current_auction["_ending"] = state._ending
 
     # Build bidders list text
     if sorted_bidders:
@@ -1654,8 +1642,8 @@ async def end_auction(bot):
         f"{bidders_text}\n"
         f"系統將自動發送結算連結給得標者。"
     )
-    
-    # Issue 3 fix: retry once on 429 (rate limit) after 5s
+
+    # Retry once on 429 (rate limit) after 5s
     edit_ok = False
     try:
         await bot.edit_message_caption(
@@ -1663,13 +1651,12 @@ async def end_auction(bot):
             message_id=current_auction["message_id"],
             caption=final_text,
             reply_markup=None,
-            parse_mode=ParseMode.HTML
+            parse_mode="HTML"
         )
         edit_ok = True
     except Exception as e:
         err_str = str(e)
         logger.warning(f"Failed to edit auction message: {e}")
-        # Retry once on rate limit
         if "429" in err_str:
             logger.info("Rate limited (429); waiting 5s before retry...")
             await asyncio.sleep(5)
@@ -1679,23 +1666,21 @@ async def end_auction(bot):
                     message_id=current_auction["message_id"],
                     caption=final_text,
                     reply_markup=None,
-                    parse_mode=ParseMode.HTML
+                    parse_mode="HTML"
                 )
                 edit_ok = True
             except Exception as e2:
                 logger.error(f"Retry also failed: {e2}")
-        # If not a 429, also try fallback below
-        # Fallback: Send a new message only if edit truly failed (not rate-limited and retried)
         if not edit_ok:
             try:
                 await bot.send_message(
                     chat_id=current_auction["chat_id"],
                     text=final_text,
-                    parse_mode=ParseMode.HTML
+                    parse_mode="HTML"
                 )
             except Exception as e2:
                 logger.error(f"Failed to send fallback message: {e2}")
-    
+
     if winner_id:
         order = {
             "order_id": f"ORD-{int(datetime.now().timestamp())}",
@@ -1707,11 +1692,9 @@ async def end_auction(bot):
             "session_id": current_auction.get("session_id")
         }
         await store.add_order(order)
-        
+
         try:
             user_info = await store.get_user(winner_id)
-            
-            # Update winner message: No payment link, just email notification
             msg = (
                 f"🎉 恭喜您標得 <b>{html.escape(title)}</b>！\n\n"
                 f"金額：${price}\n"
@@ -1719,16 +1702,15 @@ async def end_auction(bot):
                 f"ℹ️ <b>付款安排</b>：\n"
                 f"拍賣結束後，我們會另外再發送付款連結到您的 Email，請留意查收。"
             )
-            await bot.send_message(chat_id=winner_id, text=msg, parse_mode=ParseMode.HTML)
-
+            await bot.send_message(chat_id=winner_id, text=msg, parse_mode="HTML")
         except Exception as e:
             logger.error(f"Failed to DM winner: {e}")
             await bot.send_message(
-                chat_id=current_auction["chat_id"], 
+                chat_id=current_auction["chat_id"],
                 text=f"⚠️ 無法私聊得標者 (ID: {winner_id})，請主動聯繫管理員。"
             )
 
-    # Issue 2 fix: reset ending flag
+    # Reset ending flag
     current_auction["_ending"] = False
 
     # Check if batch mode is active and auto-advance to next item
@@ -1738,7 +1720,6 @@ async def end_auction(bot):
         await start_next_queued_auction(bot)
 
 
-# ============================================================
 # BATCH AUCTION SYSTEM
 # ============================================================
 
@@ -2823,6 +2804,9 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     # 連接數據庫
     await store.connect()
+
+    # 初始化 AuctionEngine（逐漸接管 current_auction 全局 dict）
+    auction_engine = AuctionEngine(store, ITEM_DURATION)
 
     # 啟動 Web Server (為了 Zeabur 保持活躍)
     await run_web_server()
