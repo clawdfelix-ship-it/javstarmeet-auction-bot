@@ -6,3 +6,4 @@ openpyxl
 aiohttp
 psycopg2-binary
 asyncpg
+filelock>=3.13.0

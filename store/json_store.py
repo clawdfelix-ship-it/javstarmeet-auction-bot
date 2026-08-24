@@ -5,6 +5,8 @@ import os
 from datetime import datetime
 from typing import Any
 
+from filelock import FileLock
+
 from store.base import Store
 
 logger = logging.getLogger(__name__)
@@ -15,6 +17,7 @@ class JsonStore(Store):
 
     def __init__(self, db_file: str = "data.json"):
         self._db_file = db_file
+        self._lock_file = db_file + ".lock"
         self._data: dict[str, Any] = {
             "users": {},
             "blacklist": [],
@@ -38,9 +41,12 @@ class JsonStore(Store):
                 logger.error(f"Failed to load data: {e}")
 
     def _save(self) -> None:
+        """Save with file lock to prevent corruption from concurrent writes."""
+        lock = FileLock(self._lock_file, timeout=10)
         try:
-            with open(self._db_file, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, ensure_ascii=False, indent=2)
+            with lock:
+                with open(self._db_file, "w", encoding="utf-8") as f:
+                    json.dump(self._data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"Failed to save data: {e}")
 
