@@ -1179,7 +1179,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif query.data == "admin_batch_menu":
-        await show_batch_admin_panel(context.bot, chat_id=query.message.chat_id)
+        await show_batch_admin_panel(auction_engine, context.bot, chat_id=query.message.chat_id)
         return
 
     elif query.data == "admin_back":
@@ -1826,7 +1826,7 @@ async def start_single_batch_item(bot, item):
 async def notify_batch_progress(bot):
     """Notify admin of batch progress and update the admin panel."""
     # Update the admin panel
-    await show_batch_admin_panel(bot)
+    await show_batch_admin_panel(auction_engine, bot)
 
     # Also send a detailed progress message
     queue_len = len(auction_engine.state.batch_queue)
@@ -2011,7 +2011,7 @@ async def import_batch_command(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode=ParseMode.HTML
     )
     # Show admin batch control panel
-    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
+    await show_batch_admin_panel(auction_engine, context.bot, chat_id=update.effective_chat.id)
 
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2092,7 +2092,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     # Show admin batch control panel with scheduled state
-    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
+    await show_batch_admin_panel(auction_engine, context.bot, chat_id=update.effective_chat.id)
 
 
 async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2219,7 +2219,7 @@ async def pause_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode=ParseMode.HTML
     )
     # Update admin panel
-    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
+    await show_batch_admin_panel(auction_engine, context.bot, chat_id=update.effective_chat.id)
 
 
 async def resume_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2244,7 +2244,7 @@ async def resume_batch_command(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode=ParseMode.HTML
     )
     # Update admin panel
-    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
+    await show_batch_admin_panel(auction_engine, context.bot, chat_id=update.effective_chat.id)
 
 
 async def abort_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2310,7 +2310,7 @@ async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode=ParseMode.HTML
     )
     # Also show/update the admin panel with buttons
-    await show_batch_admin_panel(context.bot, chat_id=update.effective_chat.id)
+    await show_batch_admin_panel(auction_engine, context.bot, chat_id=update.effective_chat.id)
 
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

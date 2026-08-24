@@ -25,17 +25,17 @@ class BatchState:
 batch_state = BatchState()
 
 
-def get_batch_state(current_auction: dict) -> str:
+def get_batch_state(auction_engine) -> str:
     """Determine current batch state for panel display."""
-    if current_auction.get("batch_abort"):
+    if auction_engine.state.batch_abort:
         return "aborting"
-    if current_auction.get("batch_mode"):
-        if current_auction.get("batch_paused"):
+    if auction_engine.state.batch_mode:
+        if auction_engine.state.batch_paused:
             return "paused"
         return "running"
-    if current_auction.get("scheduled_start"):
+    if auction_engine.state.scheduled_start:
         return "scheduled"
-    queue = current_auction.get("batch_queue", [])
+    queue = auction_engine.state.batch_queue
     if queue:
         return "idle"
     return "empty"
@@ -100,11 +100,11 @@ def build_batch_admin_keyboard(state: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
-def build_batch_admin_text(state: str, current_auction: dict) -> str:
+def build_batch_admin_text(state: str, auction_engine) -> str:
     """Build admin panel text based on current batch state."""
-    queue_len = len(current_auction.get("batch_queue", []))
-    sched_time = current_auction.get("scheduled_start", "未設定")
-    target_type = current_auction.get("batch_target_group", "prod")
+    queue_len = len(auction_engine.state.batch_queue)
+    sched_time = auction_engine.state.scheduled_start or "未設定"
+    target_type = auction_engine.state.batch_target_group
     target_desc = "正式群組" if target_type != "test" else "測試群組"
 
     if state == "empty":
@@ -133,8 +133,8 @@ def build_batch_admin_text(state: str, current_auction: dict) -> str:
         )
 
     if state == "running":
-        idx = current_auction.get("batch_current_index", 0) + 1
-        title = html.escape(current_auction.get("title", "?"))
+        idx = auction_engine.state.batch_current_index + 1
+        title = html.escape(auction_engine.state.title or "?")
         return (
             "📋 <b>批次拍賣控制台</b>\n\n"
             f"📦 進度：Item {idx}/{queue_len}\n"
@@ -145,8 +145,8 @@ def build_batch_admin_text(state: str, current_auction: dict) -> str:
         )
 
     if state == "paused":
-        idx = current_auction.get("batch_current_index", 0) + 1
-        title = html.escape(current_auction.get("title", "?"))
+        idx = auction_engine.state.batch_current_index + 1
+        title = html.escape(auction_engine.state.title or "?")
         return (
             "📋 <b>批次拍賣控制台</b>\n\n"
             f"📦 進度：Item {idx}/{queue_len}\n"
@@ -167,10 +167,10 @@ def build_batch_admin_text(state: str, current_auction: dict) -> str:
 
 
 
-async def show_batch_admin_panel(bot, chat_id=None, message_id=None, update_existing=True):
+async def show_batch_admin_panel(auction_engine, bot, chat_id=None, message_id=None, update_existing=True):
     """Send or edit the admin batch control panel message."""
-    state = get_batch_state(current_auction)
-    text = build_batch_admin_text(state, current_auction)
+    state = get_batch_state(auction_engine)
+    text = build_batch_admin_text(state, auction_engine)
     keyboard = build_batch_admin_keyboard(state)
 
     admin_id = ADMIN_IDS[0] if ADMIN_IDS else None
@@ -225,10 +225,10 @@ async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if data == "batch_start":
         # Start the batch auction
-        if not current_auction.get("batch_queue"):
+        if not auction_engine.state.batch_queue:
             await query.message.edit_text("❌ 請先使用 /import_batch 匯入拍賣品。")
             return
-        if current_auction.get("active"):
+        if auction_engine.state.active:
             await query.message.edit_text("❌ 已有拍賣正在進行中。")
             return
         # Trigger start - redirect by editing message and letting admin use command
@@ -242,13 +242,13 @@ async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == "batch_clear":
         # Clear the queue
-        queue_len = len(current_auction.get("batch_queue", []))
-        current_auction["batch_queue"] = []
-        current_auction["batch_mode"] = False
-        current_auction["scheduled_start"] = None
-        current_auction["batch_current_index"] = 0
-        current_auction["batch_paused"] = False
-        current_auction["batch_abort"] = False
+        queue_len = len(auction_engine.state.batch_queue)
+        auction_engine.state.batch_queue = []
+        auction_engine.state.batch_mode = False
+        auction_engine.state.scheduled_start = None
+        auction_engine.state.batch_current_index = 0
+        auction_engine.state.batch_paused = False
+        auction_engine.state.batch_abort = False
         batch_state.clear()
         await query.message.edit_text(
             f"✅ 已清空隊列（{queue_len} 件已移除）。",
@@ -257,14 +257,14 @@ async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == "batch_status":
         # Show detailed status
-        queue_len = len(current_auction.get("batch_queue", []))
-        sched_time = current_auction.get("scheduled_start", "未設定")
-        state = get_batch_state(current_auction)
+        queue_len = len(auction_engine.state.batch_queue)
+        sched_time = auction_engine.state.scheduled_start or "未設定"
+        state = get_batch_state(auction_engine)
 
-        if current_auction.get("batch_mode"):
-            idx = current_auction.get("batch_current_index", 0) + 1
-            title = html.escape(current_auction.get("title", "?"))
-            status = "⏸ 已暫停" if current_auction.get("batch_paused") else "▶️ 運行中"
+        if auction_engine.state.batch_mode:
+            idx = auction_engine.state.batch_current_index + 1
+            title = html.escape(auction_engine.state.title or "?")
+            status = "⏸ 已暫停" if auction_engine.state.batch_paused else "▶️ 運行中"
             text = (
                 f"📊 <b>批次狀態</b>\n\n"
                 f"📦 隊列：{queue_len} 件\n"
@@ -285,48 +285,48 @@ async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == "batch_start_now":
         # Cancel schedule and start immediately
-        current_auction["scheduled_start"] = None
+        auction_engine.state.scheduled_start = None
         await query.message.edit_text("🚀 正在立即開始批次拍賣...", parse_mode=ParseMode.HTML)
         await start_batch_command(update, context)
 
     elif data == "batch_cancel_schedule":
         # Cancel the scheduled time
-        current_auction["scheduled_start"] = None
-        state = get_batch_state(current_auction)
-        text = build_batch_admin_text(state, current_auction)
+        auction_engine.state.scheduled_start = None
+        state = get_batch_state(auction_engine)
+        text = build_batch_admin_text(state, auction_engine)
         keyboard = build_batch_admin_keyboard(state)
         await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
         await query.message.reply_text("✅ 排程已取消。", parse_mode=ParseMode.HTML)
 
     elif data == "batch_pause":
         # Pause the batch
-        if not current_auction.get("batch_mode"):
+        if not auction_engine.state.batch_mode:
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
-        if current_auction.get("batch_paused"):
+        if auction_engine.state.batch_paused:
             await query.answer("已經是暫停狀態", show_alert=True)
             return
-        current_auction["batch_paused"] = True
+        auction_engine.state.batch_paused = True
         await show_batch_admin_panel(bot, update_existing=True)
 
     elif data == "batch_resume":
         # Resume the batch
-        if not current_auction.get("batch_mode"):
+        if not auction_engine.state.batch_mode:
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
-        if not current_auction.get("batch_paused"):
+        if not auction_engine.state.batch_paused:
             await query.answer("不是暫停狀態", show_alert=True)
             return
-        current_auction["batch_paused"] = False
+        auction_engine.state.batch_paused = False
         await show_batch_admin_panel(bot, update_existing=True)
 
     elif data == "batch_abort":
         # Abort the batch
-        if not current_auction.get("batch_mode"):
+        if not auction_engine.state.batch_mode:
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
-        current_auction["batch_abort"] = True
-        current_auction["batch_paused"] = False
+        auction_engine.state.batch_abort = True
+        auction_engine.state.batch_paused = False
         await show_batch_admin_panel(bot, update_existing=True)
 
 
@@ -337,42 +337,6 @@ BATCH_CALLBACK_PATTERNS = [
     "batch_pause", "batch_resume", "batch_abort",
 ]
 
-# 全局拍賣狀態
-current_auction = {
-    "active": False,
-    "start_time": None,
-    "end_time": None,
-    "title": "",
-    "photo_id": None,
-    "base_price": 0,
-    "current_price": 0,
-    "bin_price": 0,         # 一口價 (0 = 不設)
-    "pending_price": 0,     # 暗標：待 reveal 的價格
-    "pending_bidder": None, # user_id
-    "pending_bidder_name": "無",
-    "bidders": [],          # list of {id, name, price, time} - all bidders
-    "highest_bidder": None,  # 上一個最高出價者 (for outbid notification)
-    "highest_bidder_name": "無",
-    "message_id": None,     # 拍賣訊息 ID (群組)
-    "chat_id": None,        # 群組 ID
-    "timer_task": None,
-    "update_event": asyncio.Event(),
-    "session_id": None,
-    "session_seq": 0,
-    "bot_username": None,
-    "_ending": False,  # Flag: auction is in the process of ending (used to accept late-arriving bids)
-    "bin_confirm_user_id": None,
-    "bin_confirm_expires_at": 0,
 
-    # Batch auction state
-    "batch_mode": False,           # True when running batch auction
-    "batch_queue": [],             # list of items: [{title, price, bin_price, photo_id, target_chat_id, target_type}, ...]
-    "batch_current_index": 0,       # current item index in batch
-    "batch_paused": False,         # True when batch is paused
-    "batch_abort": False,          # True when batch should be aborted
-    "batch_target_group": None,    # "prod" or "test"
-    "scheduled_start": None,       # datetime when scheduled batch should start
-    "batch_timer_task": None,      # asyncio task for scheduled batch start
-}
 
 # auction_lock is defined in core/auction.py
