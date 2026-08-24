@@ -388,15 +388,20 @@ async def auction_timer_loop(bot):
 async def handle_private_bid_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text
-    
+
     if not text.isdigit():
         await update.message.reply_text("❌ 格式錯誤，請輸入純數字：")
         return BIDDING_PRICE
 
     price = int(text)
-    
+
     if not current_auction["active"]:
         await update.message.reply_text("❌ 拍賣已結束。")
+        return ConversationHandler.END
+
+    # 🔴 Block blacklisted users
+    if await store.is_blacklisted(user.id):
+        await update.message.reply_text("🚫 您已被禁止參與拍賣。")
         return ConversationHandler.END
 
     # Check registration
@@ -556,7 +561,12 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not current_auction["active"]:
         await query.answer("❌ 拍賣已結束", show_alert=True)
         return
-    
+
+    # 🔴 Block blacklisted users
+    if await store.is_blacklisted(user.id):
+        await query.answer("🚫 您已被禁止參與拍賣。", show_alert=True)
+        return
+
     # Check if user has registered
     if not await store.is_registered(user.id):
         bot_username = current_auction.get("bot_username") or context.bot.username
@@ -1384,6 +1394,12 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_blind_bid(user, price, query=None, bot=None):
     # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
     # 每人只能出一次價，價錢任意，最後 reveal 時價高者得
+
+    # 🔴 Block blacklisted users
+    if await store.is_blacklisted(user.id):
+        if query:
+            await query.answer("🚫 您已被禁止參與拍賣。", show_alert=True)
+        return
 
     # Issue 1 fix: if auction is in the process of ending (end_auction running),
     # extend time by 2s to accept the bid rather than rejecting it outright.
