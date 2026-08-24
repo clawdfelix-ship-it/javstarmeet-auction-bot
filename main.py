@@ -58,9 +58,6 @@ WAITING_MEMBERS_CSV = 9
 # --- Constants ---
 
 
-# --- Global Auction State (legacy — gradually migrating to AuctionEngine) ---
-current_auction: dict = {}
-
 # AuctionEngine instance (initialized in main(), used by module-level handlers)
 auction_engine: "AuctionEngine" = None  # type: ignore
 
@@ -393,8 +390,8 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        auction_chat_id = int(current_auction.get("chat_id"))
-        auction_message_id = int(current_auction.get("message_id"))
+        auction_chat_id = int(auction_engine.state.chat_id)
+        auction_message_id = int(auction_engine.state.message_id)
     except (ValueError, TypeError):
         await query.answer("⚠️ 拍賣狀態已重置，請管理員重新開拍賣", show_alert=True)
         return
@@ -404,7 +401,7 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.answer("⚠️ 呢個按鈕已過期", show_alert=True)
             return
 
-    bin_price = int(current_auction.get("bin_price", 0) or 0)
+    bin_price = int(auction_engine.state.bin_price)
     if bin_price <= 0:
         await query.answer("❌ 此拍賣未設定一口價", show_alert=True)
         return
@@ -438,7 +435,7 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         auction_engine.state.bin_confirm_user_id = None
         auction_engine.state.bin_confirm_expires_at = 0
         try:
-            await query.message.edit_reply_markup(reply_markup=generate_bid_keyboard(current_auction.get("current_price", 0)))
+            await query.message.edit_reply_markup(reply_markup=generate_bid_keyboard(auction_engine.state.current_price))
         except telegram.error.TelegramError as e:
             logger.warning(f"Failed to restore bid keyboard: {e}")
         return
@@ -456,7 +453,7 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         # 🟡 Fix: check if bin confirm has expired
         now = datetime.now().timestamp()
-        confirm_expires_at = current_auction.get("bin_confirm_expires_at", 0)
+        confirm_expires_at = auction_engine.state.bin_confirm_expires_at
         if confirm_expires_at and now >= confirm_expires_at:
             auction_engine.state.bin_confirm_user_id = None
             auction_engine.state.bin_confirm_expires_at = 0
@@ -477,7 +474,7 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         user_info = await store.get_user(user.id)
         winner_name = (user_info or {}).get("name") or user.first_name or ""
 
-        bidders = current_auction.get("bidders", [])
+        bidders = auction_engine.state.bidders
         updated = False
         for b in bidders:
             if b.get("id") == user.id:
@@ -976,7 +973,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "admin_schedule":
         # Prompt for datetime - show current schedule and instructions
-        sched = current_auction.get("scheduled_start", "未設定")
+        sched = auction_engine.state.scheduled_start or "未設定"
         await query.message.edit_text(
             f"🕐 <b>排程設定</b>\n\n"
             f"當前排程：{sched}\n\n"
@@ -1043,13 +1040,13 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📌 進度：Item {idx}/{queue_len}\n"
                 f"📝 當前：{title}\n"
                 f"🔘 狀態：{status}\n"
-                f"🕐 排程：{current_auction.get('scheduled_start', '無')}"
+                f"🕐 排程：{auction_engine.state.scheduled_start or "無"}"
             )
         else:
             text = (
                 f"📊 <b>批次狀態</b>\n\n"
                 f"📦 隊列：{queue_len} 件\n"
-                f"🕐 排程：{current_auction.get('scheduled_start', '未設定')}"
+                f"🕐 排程：{auction_engine.state.scheduled_start or "未設定"}"
             )
         await query.message.edit_text(text, parse_mode=ParseMode.HTML)
         return
@@ -1442,7 +1439,7 @@ async def start_auction_from_queue(bot, item):
     auction_engine.state.session_id = session_id
     auction_engine.state.session_seq = session_seq
     auction_engine.state.chat_id = target_chat_id
-    if current_auction.get("update_event"):
+    if auction_engine.state.update_event:
         auction_engine.state.update_event.clear()
 
     # Get bot username for deep linking
@@ -1789,7 +1786,7 @@ async def start_single_batch_item(bot, item):
     auction_engine.state.session_seq = state.session_seq
     auction_engine.state.chat_id = state.chat_id
     auction_engine.state._ending = state._ending
-    if current_auction.get("update_event"):
+    if auction_engine.state.update_event:
         auction_engine.state.update_event.clear()
 
     try:
@@ -1834,7 +1831,7 @@ async def notify_batch_progress(bot):
     # Also send a detailed progress message
     queue_len = len(auction_engine.state.batch_queue)
     current_idx = auction_engine.state.batch_current_index + 1  # 1-indexed for display
-    title = current_auction.get("title", "?")
+    title = auction_engine.state.title or "?"
     
     # Try to find admin chat_id from config or use first admin
     admin_id = ADMIN_IDS[0] if ADMIN_IDS else None
@@ -1846,7 +1843,7 @@ async def notify_batch_progress(bot):
                 text=f"📦 <b>批次拍賣進度</b>\n\n"
                      f"項目：{current_idx}/{queue_len}\n"
                      f"當前：{html.escape(title)}\n"
-                     f"模式：{'運行中' if not current_auction.get('batch_paused') else '⏸ 已暫停'}",
+                     f"模式：{'運行中' if not auction_engine.state.batch_paused else '⏸ 已暫停'}",
                 parse_mode=ParseMode.HTML
             )
         except telegram.error.TelegramError as e:
@@ -2083,7 +2080,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     estimated_end_dt = scheduled_dt + timedelta(seconds=total_duration_seconds)
 
     # Get target group info
-    target_type = current_auction.get("batch_target_group", "正式")
+    target_type = auction_engine.state.batch_target_group
     target_desc = f"【{target_type}群組】" if target_type else "未設定"
 
     await update.message.reply_text(
@@ -2133,7 +2130,7 @@ async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             logger.exception("Invalid schedule format, proceeding with immediate start")
 
     # Determine target group
-    target_type = current_auction.get("batch_target_group", "prod")
+    target_type = auction_engine.state.batch_target_group
     if target_type == "test":
         target_chat_id = await store.get_config("test_group_id")
         target_desc = "測試群組"
@@ -2289,8 +2286,8 @@ async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             f"📋 <b>批次拍賣狀態</b>\n\n"
             f"📦 隊列中的拍賣品：{queue_len} 件\n"
-            f"🕐 排程時間：{current_auction.get('scheduled_start', '未設定')}\n"
-            f"📢 發佈群組：{current_auction.get('batch_target_group', '正式')}\n\n"
+            f"🕐 排程時間：{auction_engine.state.scheduled_start or "未設定"}\n"
+            f"📢 發佈群組：{auction_engine.state.batch_target_group}\n\n"
             f"💡 使用 <code>/start_batch</code> 開始拍賣。",
             parse_mode=ParseMode.HTML
         )
@@ -2298,7 +2295,7 @@ async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     queue_len = len(auction_engine.state.batch_queue)
     current_idx = auction_engine.state.batch_current_index + 1  # 1-indexed
-    current_title = current_auction.get("title", "?")
+    current_title = auction_engine.state.title or "?"
     status = "⏸ 已暫停" if auction_engine.state.batch_paused else "▶️ 運行中"
     
     remaining = queue_len - auction_engine.state.batch_current_index
@@ -2309,7 +2306,7 @@ async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYP
         f"當前：{html.escape(current_title)}\n"
         f"狀態：{status}\n"
         f"剩餘：{remaining} 件\n"
-        f"🕐 排程：{current_auction.get('scheduled_start', '無')}",
+        f"🕐 排程：{auction_engine.state.scheduled_start or "無"}",
         parse_mode=ParseMode.HTML
     )
     # Also show/update the admin panel with buttons
@@ -2334,7 +2331,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_text = " ".join(context.args)
 
     # Determine target group
-    target_type = current_auction.get("batch_target_group", "prod")
+    target_type = auction_engine.state.batch_target_group
     if target_type == "test":
         target_chat_id = await store.get_config("test_group_id")
         target_desc = "測試群組"
