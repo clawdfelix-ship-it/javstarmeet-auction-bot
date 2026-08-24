@@ -2690,7 +2690,8 @@ async def run_web_server():
     app.router.add_get('/bid_webapp', bid_webapp_handler) # Add WebApp route
     runner = aiohttp.web.AppRunner(app)
     await runner.setup()
-    site = aiohttp.web.TCPSite(runner, '0.0.0.0', 8080)
+    port = int(os.environ.get('PORT', 8080))
+    site = aiohttp.web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     logger.info("Web server started on port 8080")
 
@@ -2853,13 +2854,16 @@ async def main():
     await stop_signal.wait()
 
 if __name__ == "__main__":
-    import aiohttp.web # Import here to avoid circular or top-level issues if not installed
-    
+    import aiohttp.web  # Import here to avoid circular or top-level issues if not installed
+
     if not TOKEN:
         logger.error("Error: BOT_TOKEN is not set in environment variables.")
         exit(1)
-        
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        pass  # Intentional: graceful shutdown on Ctrl+C  # Graceful shutdown
+        pass  # Intentional: graceful shutdown on Ctrl+C
+    except Exception:
+        logger.exception("Fatal error during startup, exiting")
+        exit(1)
