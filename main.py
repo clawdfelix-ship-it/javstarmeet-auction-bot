@@ -2515,7 +2515,8 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cw.writerow([uid, name, phone, email, pickup])
         
     si.seek(0)
-    await message.reply_document(
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
         document=io.BytesIO(si.getvalue().encode('utf-8-sig')),
         filename="users.csv",
         caption="📊 用戶名單"
@@ -2548,7 +2549,8 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
         
     si.seek(0)
-    await message.reply_document(
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
         document=io.BytesIO(si.getvalue().encode('utf-8-sig')),
         filename="orders.csv",
         caption="📊 訂單記錄 (含客戶資料)"
