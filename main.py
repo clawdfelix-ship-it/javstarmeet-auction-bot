@@ -136,7 +136,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error(f"Failed to get bot info: {e}")
 
-    text = generate_auction_text(auction_engine.get_item_duration())
+    text = generate_auction_text(auction_engine.state, auction_engine.get_item_duration())
     keyboard = generate_bid_keyboard(price)
 
     await query.delete_message()
@@ -364,7 +364,7 @@ async def auction_timer_loop(bot):
                     await bot.edit_message_caption(
                         chat_id=current_auction["chat_id"],
                         message_id=current_auction["message_id"],
-                        caption=generate_auction_text(remaining),
+                        caption=generate_auction_text(auction_engine.state, remaining),
                         reply_markup=generate_bid_keyboard(current_auction["current_price"]),
                         parse_mode=ParseMode.HTML
                     )
@@ -1532,7 +1532,7 @@ async def start_auction_from_queue(bot, item):
     except Exception as e:
         logger.error(f"Failed to get bot username: {e}")
 
-    text = generate_auction_text(ITEM_DURATION)
+    text = generate_auction_text(auction_engine.state, ITEM_DURATION)
     keyboard = generate_bid_keyboard(price)
 
     msg = await bot.send_photo(
@@ -1875,7 +1875,7 @@ async def start_single_batch_item(bot, item):
         logger.error(f"Failed to get bot username: {e}")
 
     # Generate auction message
-    text = generate_auction_text(ITEM_DURATION)
+    text = generate_auction_text(auction_engine.state, ITEM_DURATION)
     keyboard = generate_bid_keyboard(price)
 
     try:
