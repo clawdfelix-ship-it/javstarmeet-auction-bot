@@ -271,9 +271,7 @@ current_auction = {
     "batch_timer_task": None,      # asyncio task for scheduled batch start
 }
 
-# Lock to prevent race conditions when multiple users bid simultaneously
-auction_lock = asyncio.Lock()
-
+# auction_lock is defined in core/auction.py
 # --- 註冊流程 ---
 async def start_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
