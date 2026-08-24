@@ -147,7 +147,7 @@ class Store:
             try:
                 await conn.execute("ALTER TABLE orders ADD COLUMN session_id TEXT")
             except Exception:
-                pass
+                logger.exception("Failed to add session_id column to orders table")
 
             logger.info("PostgreSQL tables initialized.")
 
@@ -720,7 +720,7 @@ def save_auction_state():
             try:
                 os.remove(AUCTION_STATE_FILE)
             except Exception:
-                pass
+                logger.exception("Failed to remove stale auction state file")
     except Exception as e:
         logger.error(f"Failed to save auction state: {e}")
 
@@ -1452,7 +1452,8 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer("❌ 拍賣已結束", show_alert=True)
         try:
             await query.message.delete()
-        except: pass
+        except Exception:
+            logger.exception("Failed to delete message for ended auction")
         return
 
     # Optimistic UI: Answer immediately
@@ -1479,13 +1480,13 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 parse_mode=ParseMode.HTML
             )
         except Exception as e:
-            # Ignore "message is not modified"
-            pass
+            logger.warning("Numpad edit failed: %s", e)
             
     elif action == "cancel":
         try:
             await query.message.delete()
-        except: pass
+        except Exception:
+            logger.exception("Failed to delete cancel message")
         return
         
     elif action == "enter":
@@ -1496,15 +1497,18 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Send temp message
             msg = await context.bot.send_message(chat_id=query.message.chat_id, text="❌ 金額必須大於 0")
             await asyncio.sleep(2)
-            try: await msg.delete() 
-            except: pass
+            try:
+                await msg.delete()
+            except Exception:
+                logger.exception("Failed to delete error message")
             return
             
         # Submit bid
         # Delete numpad message first
         try:
             await query.message.delete()
-        except: pass
+        except Exception:
+            logger.exception("Failed to delete numpad message on bid submit")
         
         # Process bid
         await process_blind_bid(user, price, query=None, bot=context.bot)
@@ -1655,7 +1659,7 @@ async def auction_timer_loop(bot):
                 await asyncio.wait_for(event.wait(), timeout=wait_time)
                 event.clear()
             except asyncio.TimeoutError:
-                pass
+                pass  # Intentional: timeout means auction still running, no action needed
                     
         except asyncio.CancelledError:
             break
@@ -1852,7 +1856,7 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 me = await context.bot.get_me()
                 bot_username = me.username
             except Exception:
-                pass
+                logger.warning("Failed to get bot username for register link")
         if bot_username:
             url = f"https://t.me/{bot_username}?start=register"
             await query.answer("⚠️ 請先點此註冊！", url=url)
@@ -1886,7 +1890,7 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             me = await context.bot.get_me()
             bot_username = me.username
         except Exception:
-            pass
+            logger.warning("Failed to get bot username for bid link")
 
     if bot_username:
         url = f"https://t.me/{bot_username}?start=bid"
@@ -1936,7 +1940,8 @@ async def my_orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 dt = datetime.fromisoformat(date_str)
                 date_key = dt.strftime('%Y-%m-%d')
-            except:
+            except Exception:
+                logger.exception("Failed to parse order date")
                 date_key = "未知日期"
         elif isinstance(date_str, datetime):
             date_key = date_str.strftime('%Y-%m-%d')
@@ -2044,7 +2049,7 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message:
             await update.message.delete()
     except Exception:
-        pass
+        logger.exception("Failed to delete admin command message")
 
     # Send the admin panel as a new message
     await context.bot.send_message(
@@ -2641,8 +2646,8 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Delete the prompt message to clean up
             try:
                 await msg.reply_to_message.delete()
-            except:
-                pass
+            except Exception:
+                logger.exception("Failed to delete bid prompt message")
 
     # If user wants to DISABLE direct text bidding, we only allow valid replies
     if not is_valid_reply:
@@ -2664,8 +2669,8 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_blind_bid(user, bid_price, None, context.bot)
     try:
         await msg.delete()
-    except:
-        pass
+    except Exception:
+        logger.exception("Failed to delete bid text message")
 
 async def process_blind_bid(user, price, query=None, bot=None):
     # Use lock to prevent race conditions
@@ -2823,7 +2828,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
         try:
             timer_task.cancel()
         except Exception:
-            pass
+            logger.exception("Failed to cancel timer task")
 
     winner_prefix = html.escape(truncate_name_prefix(winner_name, 4))
     final_text = (
@@ -3521,7 +3526,7 @@ async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 )
                 return
         except ValueError:
-            pass  # Invalid format, proceed with immediate start
+            logger.exception("Invalid schedule format, proceeding with immediate start")
 
     # Determine target group
     target_type = current_auction.get("batch_target_group", "prod")
@@ -3953,7 +3958,8 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = int(context.args[0])
         await store.add_blacklist(target_id)
         await update.message.reply_text(f"🚫 已封鎖用戶 {target_id}")
-    except:
+    except Exception:
+        logger.exception("Failed to parse /ban arguments")
         await update.message.reply_text("用法: /ban <user_id>")
 
 async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3962,7 +3968,8 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = int(context.args[0])
         await store.remove_blacklist(target_id)
         await update.message.reply_text(f"✅ 已解封用戶 {target_id}")
-    except:
+    except Exception:
+        logger.exception("Failed to parse /unban arguments")
         await update.message.reply_text("用法: /unban <user_id>")
 
 async def set_prod_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4126,8 +4133,8 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # But we might want to delete the "service message" that Telegram sends when WebApp data is received.
     try:
         await update.effective_message.delete()
-    except:
-        pass
+    except Exception:
+        logger.exception("Failed to delete webapp bid confirmation message")
 
 # --- 主程式 ---
 async def main():
@@ -4255,4 +4262,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        pass
+        pass  # Intentional: graceful shutdown on Ctrl+C  # Graceful shutdown
