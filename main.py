@@ -2743,13 +2743,12 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 # --- 主程式 ---
 async def main():
-    global auction_engine
+    global auction_engine, store
     # 創建並連接數據庫
     store = await create_store(DATABASE_URL)
     await store.connect()
 
     # 初始化 AuctionEngine（逐漸接管 current_auction 全局 dict）
-    global auction_engine
     auction_engine = AuctionEngine(store, ITEM_DURATION)
 
     # 啟動 Web Server (為了 Zeabur 保持活躍)
