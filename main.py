@@ -215,6 +215,21 @@ async def queue_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
         f"✅ 已加入批次拍賣隊列（{target_type}群）。\n目前隊列中共有 {len(queue)} 件拍賣品。"
     )
 
+
+def _safe_create_task(coro, name: str = "anonymous"):
+    """Create a task that logs exceptions instead of silently swallowing them."""
+    task = asyncio.create_task(coro)
+    async def _log_on_error(t):
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass  # Expected on shutdown
+        except Exception as e:
+            logger.error(f"Task '{name}' raised: {e}")
+    asyncio.create_task(_log_on_error(task))
+    return task
+
+
 # --- Helper for Numpad Keyboard (Stateless Logic) ---
 async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1610,7 +1625,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
     current_auction["_ending"] = False
 
     if current_auction.get("batch_mode") and not current_auction.get("batch_abort"):
-        asyncio.create_task(run_batch_auction_loop(bot))
+        _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
     else:
         await start_next_queued_auction(bot)
 
@@ -1724,7 +1739,7 @@ async def end_auction(bot):
 
     # Check if batch mode is active and auto-advance to next item
     if current_auction.get("batch_mode") and not current_auction.get("batch_abort"):
-        asyncio.create_task(run_batch_auction_loop(bot))
+        _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
     else:
         await start_next_queued_auction(bot)
 
@@ -1821,7 +1836,7 @@ async def start_single_batch_item(bot, item):
         logger.error(f"Batch item missing photo_id or target_chat_id: {title}")
         # Error path: increment index then move to next
         current_auction["batch_current_index"] += 1
-        asyncio.create_task(run_batch_auction_loop(bot))
+        _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
         return
 
     # Get session
@@ -1889,7 +1904,7 @@ async def start_single_batch_item(bot, item):
         logger.error(f"Failed to start batch item '{title}': {e}")
         # Move to next item on error
         current_auction["batch_current_index"] += 1
-        asyncio.create_task(run_batch_auction_loop(bot))
+        _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
 
 
 async def notify_batch_progress(bot):
