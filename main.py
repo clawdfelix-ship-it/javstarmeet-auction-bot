@@ -59,9 +59,8 @@ WAITING_MEMBERS_CSV = 9
 BATCH_PANEL_MESSAGE_ID = None  # chat_id, message_id of the admin panel
 BATCH_PANEL_CHAT_ID = None
 
-
-
-
+# --- Global Auction State (legacy — gradually migrating to AuctionEngine) ---
+current_auction: dict = {}
 
 # --- 拍賣核心邏輯 ---
 
