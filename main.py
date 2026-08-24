@@ -11,6 +11,7 @@ from store import create_store
 import asyncio
 from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text, ITEM_DURATION, PAUSE_BETWEEN_ITEMS
 from core.handlers import build_registration_handlers
+from core.admin import build_admin_handlers
 from core.text import generate_auction_text, build_bin_confirm_keyboard, generate_bid_keyboard, truncate_name_prefix, generate_numpad_keyboard
 
 # Telegram
@@ -59,72 +60,6 @@ BATCH_PANEL_CHAT_ID = None
 
 
 
-# --- 管理員上架流程 ---
-async def new_auction_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    message = update.effective_message
-    if user.id not in ADMIN_IDS:
-        if update.callback_query:
-            await update.callback_query.answer("⛔ 權限不足", show_alert=True)
-        await message.reply_text("⛔ 權限不足")
-        return ConversationHandler.END
-    
-    if update.callback_query:
-        await update.callback_query.answer()
-    await message.reply_text("請發送拍賣品的 <b>圖片</b>：", parse_mode=ParseMode.HTML)
-    return WAITING_PHOTO
-
-async def get_auction_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    photo = update.message.photo[-1]
-    context.user_data['auc_photo'] = photo.file_id
-    await update.message.reply_text("收到圖片。請輸入 <b>商品標題/描述</b>：", parse_mode=ParseMode.HTML)
-    return WAITING_TITLE
-
-async def get_auction_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['auc_title'] = update.message.text
-    await update.message.reply_text("請輸入 <b>起標價</b> (純數字)：", parse_mode=ParseMode.HTML)
-    return WAITING_PRICE
-
-async def get_auction_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        price = int(update.message.text)
-        context.user_data['auc_price'] = price
-    except ValueError:
-        await update.message.reply_text("❌ 格式錯誤，請輸入純數字：")
-        return WAITING_PRICE
-    
-    await update.message.reply_text("請輸入 <b>一口價 (Buy It Now)</b> 金額 (純數字，輸入 0 代表不設)：", parse_mode=ParseMode.HTML)
-    return WAITING_BIN_PRICE
-
-async def get_bin_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        bin_price = int(update.message.text)
-        context.user_data['auc_bin_price'] = bin_price
-    except ValueError:
-        await update.message.reply_text("❌ 格式錯誤，請輸入純數字：")
-        return WAITING_BIN_PRICE
-
-    # 確認上架
-    photo_id = context.user_data['auc_photo']
-    title = context.user_data['auc_title']
-    price = context.user_data['auc_price']
-    safe_title = html.escape(title)
-    
-    bin_text = f"\n⚡️ 一口價：${bin_price}" if bin_price > 0 else ""
-    
-    keyboard = [
-        [InlineKeyboardButton("🚀 發布到【客戶群】", callback_data="start_auction_prod")],
-        [InlineKeyboardButton("🧪 發布到【測試群】", callback_data="start_auction_test")],
-        [InlineKeyboardButton("📥 加入批次隊列【客戶群】", callback_data="queue_auction_prod")],
-        [InlineKeyboardButton("📥 加入批次隊列【測試群】", callback_data="queue_auction_test")]
-    ]
-    await update.message.reply_photo(
-        photo=photo_id,
-        caption=f"📝 <b>預覽上架</b>\n\n📦 商品：{safe_title}\n💰 起標：${price}{bin_text}\n\n請選擇發布目標：",
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    return ConversationHandler.END 
 
 # --- 拍賣結算邏輯 ---
 
@@ -3055,18 +2990,21 @@ async def main():
         fallbacks=[CommandHandler("cancel", _cancel_reg)],
     )
     
+    # Admin auction creation handlers（遷移到 core/admin.py）
+    _admin_fns = build_admin_handlers(store, current_auction, ADMIN_IDS)
+    (_new_auction_start, _get_auction_photo, _get_auction_title, _get_auction_price, _get_bin_price, _cancel_admin) = _admin_fns
     auction_handler = ConversationHandler(
         entry_points=[
-            CommandHandler("new_auction", new_auction_start),
-            CallbackQueryHandler(new_auction_start, pattern="^admin_add_single$"),
+            CommandHandler("new_auction", _new_auction_start),
+            CallbackQueryHandler(_new_auction_start, pattern="^admin_add_single$"),
         ],
         states={
-            WAITING_PHOTO: [MessageHandler(filters.PHOTO, get_auction_photo)],
-            WAITING_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_auction_title)],
-            WAITING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_auction_price)],
-            WAITING_BIN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bin_price)],
+            WAITING_PHOTO: [MessageHandler(filters.PHOTO, _get_auction_photo)],
+            WAITING_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_auction_title)],
+            WAITING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_auction_price)],
+            WAITING_BIN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_bin_price)],
         },
-        fallbacks=[CommandHandler("cancel", cancel_register)],
+        fallbacks=[CommandHandler("cancel", _cancel_admin)],
     )
 
     import_members_handler = ConversationHandler(
