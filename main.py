@@ -7,10 +7,9 @@ import html
 import asyncio
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
-from email_utils import send_email
 from store import create_store
 import asyncio
-from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text
+from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text, ITEM_DURATION, PAUSE_BETWEEN_ITEMS
 from core.text import generate_auction_text, build_bin_confirm_keyboard, generate_bid_keyboard, truncate_name_prefix, generate_numpad_keyboard
 
 # Telegram
@@ -977,31 +976,30 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.answer("⚠️ 請先私訊機器人 /start 完成註冊", show_alert=True)
             return
 
-        async with auction_lock:
-            if not current_auction.get("active"):
-                await query.answer("❌ 拍賣已結束", show_alert=True)
-                return
+        if not current_auction.get("active"):
+            await query.answer("❌ 拍賣已結束", show_alert=True)
+            return
 
-            current_auction["bin_confirm_user_id"] = None
-            current_auction["bin_confirm_expires_at"] = 0
+        current_auction["bin_confirm_user_id"] = None
+        current_auction["bin_confirm_expires_at"] = 0
 
-            user_info = await store.get_user(user.id)
-            winner_name = (user_info or {}).get("name") or user.first_name or ""
+        user_info = await store.get_user(user.id)
+        winner_name = (user_info or {}).get("name") or user.first_name or ""
 
-            bidders = current_auction.get("bidders", [])
-            updated = False
-            for b in bidders:
-                if b.get("id") == user.id:
-                    b["name"] = winner_name
-                    b["price"] = bin_price
-                    b["time"] = datetime.now().timestamp()
-                    updated = True
-                    break
-            if not updated:
-                bidders.append({"id": user.id, "name": winner_name, "price": bin_price, "time": datetime.now().timestamp()})
-            current_auction["bidders"] = bidders
+        bidders = current_auction.get("bidders", [])
+        updated = False
+        for b in bidders:
+            if b.get("id") == user.id:
+                b["name"] = winner_name
+                b["price"] = bin_price
+                b["time"] = datetime.now().timestamp()
+                updated = True
+                break
+        if not updated:
+            bidders.append({"id": user.id, "name": winner_name, "price": bin_price, "time": datetime.now().timestamp()})
+        current_auction["bidders"] = bidders
 
-            await end_auction_buyout(context.bot, user.id, winner_name, bin_price)
+        await end_auction_buyout(context.bot, user.id, winner_name, bin_price)
 
         await query.answer("⚡️ 買斷成功！", show_alert=True)
         return
@@ -1849,43 +1847,39 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Failed to delete bid text message")
 
 async def process_blind_bid(user, price, query=None, bot=None):
-    # Use lock to prevent race conditions
-    async with auction_lock:
-        # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
-        # 每人只能出一次價，價錢任意，最後 reveal 時價高者得
+    # 暗標拍賣：唔會即時更新 public display，淨係儲存 pending bid
+    # 每人只能出一次價，價錢任意，最後 reveal 時價高者得
 
-        # Issue 1 fix: if auction is in the process of ending (end_auction running),
-        # extend time by 2s to accept the bid rather than rejecting it outright.
-        if current_auction.get("_ending"):
-            current_auction["end_time"] = datetime.now().timestamp() + 2
-            logger.info(f"Late bid accepted; auction extended by 2s (user {user.id})")
+    # Issue 1 fix: if auction is in the process of ending (end_auction running),
+    # extend time by 2s to accept the bid rather than rejecting it outright.
+    if current_auction.get("_ending"):
+        current_auction["end_time"] = datetime.now().timestamp() + 2
+        logger.info(f"Late bid accepted; auction extended by 2s (user {user.id})")
 
-        existing_bids = current_auction.get("bidders", [])
-        if any(b["id"] == user.id for b in existing_bids):
-            if query: await query.answer("❌ 你已經出過價了", show_alert=True)
-            return
+    existing_bids = current_auction.get("bidders", [])
+    if any(b["id"] == user.id for b in existing_bids):
+        if query: await query.answer("❌ 你已經出過價了", show_alert=True)
+        return
 
-        # Store as pending (not yet public) and track bidder
-        current_auction["pending_price"] = price
-        current_auction["pending_bidder"] = user.id
-        current_auction["pending_bidder_name"] = user.first_name
-        current_auction["bidders"].append({"id": user.id, "name": user.first_name, "price": price, "time": datetime.now().timestamp()})
-        
-        # Check Buy It Now
-        bin_price = current_auction.get("bin_price", 0)
-        if bin_price > 0 and price >= bin_price:
-            # End auction immediately
-            current_auction["end_time"] = datetime.now().timestamp()
-            if current_auction.get("timer_task"):
-                current_auction["timer_task"].cancel()
-            target_bot = bot if bot else (query.bot if query else None)
-            if target_bot:
-                await end_auction(target_bot)
-            if query:
-                await query.answer(f"⚡️ 一口價成交！恭喜您！", show_alert=True)
-            return
-        
-        # Anti-sniping disabled per user request
+    # Store as pending (not yet public) and track bidder
+    current_auction["pending_price"] = price
+    current_auction["pending_bidder"] = user.id
+    current_auction["pending_bidder_name"] = user.first_name
+    current_auction["bidders"].append({"id": user.id, "name": user.first_name, "price": price, "time": datetime.now().timestamp()})
+
+    # Check Buy It Now
+    bin_price = current_auction.get("bin_price", 0)
+    if bin_price > 0 and price >= bin_price:
+        # End auction immediately
+        current_auction["end_time"] = datetime.now().timestamp()
+        if current_auction.get("timer_task"):
+            current_auction["timer_task"].cancel()
+        target_bot = bot if bot else (query.bot if query else None)
+        if target_bot:
+            await end_auction(target_bot)
+        if query:
+            await query.answer(f"⚡️ 一口價成交！恭喜您！", show_alert=True)
+        return
 
 async def notify_previous_bidder(bot, previous_bidder_id, title, new_price, new_bidder_name):
     try:
@@ -2054,24 +2048,10 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
         )
         await bot.send_message(chat_id=winner_id, text=msg, parse_mode=ParseMode.HTML)
 
-        user_email = user_info.get('email')
-        if user_email:
-            email_subject = f"買斷通知：{title}"
-            email_body = f"""
-            恭喜您成功買斷 {title}！
-
-            成交價：${price}
-
-            請等待我們發送正式付款連結。
-
-            OpenClaw 拍賣系統
-            """
-            asyncio.create_task(asyncio.to_thread(send_email, user_email, email_subject, email_body))
     except Exception as e:
         logger.error(f"Failed to DM winner (buyout): {e}")
 
     current_auction["_ending"] = False
-    save_auction_state()
 
     if current_auction.get("batch_mode") and not current_auction.get("batch_abort"):
         asyncio.create_task(run_batch_auction_loop(bot))
@@ -2189,23 +2169,6 @@ async def end_auction(bot):
                 f"拍賣結束後，我們會另外再發送付款連結到您的 Email，請留意查收。"
             )
             await bot.send_message(chat_id=winner_id, text=msg, parse_mode=ParseMode.HTML)
-            
-            # 發送郵件通知 (如果用戶有提供 Email)
-            user_email = user_info.get('email')
-            if user_email:
-                email_subject = f"得標通知：{title}"
-                email_body = f"""
-                恭喜您標得 {title}！
-                
-                成交價：${price}
-                
-                請等待我們發送正式付款連結。
-                
-                OpenClaw 拍賣系統
-                """
-                
-                # Use asyncio.to_thread to prevent blocking the event loop
-                asyncio.create_task(asyncio.to_thread(send_email, user_email, email_subject, email_body))
 
         except Exception as e:
             logger.error(f"Failed to DM winner: {e}")
@@ -2214,10 +2177,9 @@ async def end_auction(bot):
                 text=f"⚠️ 無法私聊得標者 (ID: {winner_id})，請主動聯繫管理員。"
             )
 
-    # Issue 2 fix: persist state and reset ending flag
+    # Issue 2 fix: reset ending flag
     current_auction["_ending"] = False
-    save_auction_state()
-    
+
     # Check if batch mode is active and auto-advance to next item
     if current_auction.get("batch_mode") and not current_auction.get("batch_abort"):
         asyncio.create_task(run_batch_auction_loop(bot))
@@ -3310,14 +3272,6 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     # 連接數據庫
     await store.connect()
-
-    # Issue 2 fix: check for unfinished auction from previous run
-    if load_auction_state():
-        # Auction was active when bot crashed — auto-abort and notify admin on next start
-        logger.warning("Unfinished auction found on startup; auto-aborting.")
-        current_auction["active"] = False
-        current_auction["_ending"] = False
-        save_auction_state()  # clears the file
 
     # 啟動 Web Server (為了 Zeabur 保持活躍)
     await run_web_server()
