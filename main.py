@@ -1760,48 +1760,48 @@ async def start_single_batch_item(bot, item):
 
     if not photo_id or not target_chat_id:
         logger.error(f"Batch item missing photo_id or target_chat_id: {title}")
-        # Error path: increment index then move to next
         current_auction["batch_current_index"] += 1
         _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
         return
 
-    # Get session
-    session_id, session_seq = await store.get_next_session()
     target_chat_id = int(target_chat_id)
 
-    # Reset auction state for new item
-    current_auction["active"] = True
-    current_auction["title"] = title
-    current_auction["base_price"] = price
-    current_auction["current_price"] = price
-    current_auction["pending_price"] = price
-    current_auction["pending_bidder"] = None
-    current_auction["pending_bidder_name"] = "無"
-    current_auction["bidders"] = []
-    current_auction["bin_price"] = bin_price
-    current_auction["bin_confirm_user_id"] = None
-    current_auction["bin_confirm_expires_at"] = 0
-    current_auction["photo_id"] = photo_id
-    current_auction["highest_bidder"] = None
-    current_auction["highest_bidder_name"] = "無"
-    current_auction["start_time"] = datetime.now()
-    current_auction["end_time"] = datetime.now().timestamp() + ITEM_DURATION
-    current_auction["session_id"] = session_id
-    current_auction["session_seq"] = session_seq
-    current_auction["chat_id"] = target_chat_id
-    current_auction["_ending"] = False
+    # Delegate to AuctionEngine
+    await auction_engine.start_auction(title, photo_id, price, bin_price, target_chat_id)
+
+    # Sync engine state to current_auction for display
+    state = auction_engine.state
+    current_auction["active"] = state.active
+    current_auction["title"] = state.title
+    current_auction["base_price"] = state.base_price
+    current_auction["current_price"] = state.current_price
+    current_auction["pending_price"] = state.pending_price
+    current_auction["pending_bidder"] = state.pending_bidder
+    current_auction["pending_bidder_name"] = state.pending_bidder_name
+    current_auction["bidders"] = state.bidders
+    current_auction["bin_price"] = state.bin_price
+    current_auction["bin_confirm_user_id"] = state.bin_confirm_user_id
+    current_auction["bin_confirm_expires_at"] = state.bin_confirm_expires_at
+    current_auction["photo_id"] = state.photo_id
+    current_auction["highest_bidder"] = state.highest_bidder
+    current_auction["highest_bidder_name"] = state.highest_bidder_name
+    current_auction["start_time"] = state.start_time
+    current_auction["end_time"] = state.end_time
+    current_auction["session_id"] = state.session_id
+    current_auction["session_seq"] = state.session_seq
+    current_auction["chat_id"] = state.chat_id
+    current_auction["_ending"] = state._ending
     if current_auction.get("update_event"):
         current_auction["update_event"].clear()
 
-    # Get bot username for deep linking
     try:
         me = await bot.get_me()
         current_auction["bot_username"] = me.username
+        state.bot_username = me.username
     except Exception as e:
         logger.error(f"Failed to get bot username: {e}")
 
-    # Generate auction message
-    text = generate_auction_text(auction_engine.state, ITEM_DURATION)
+    text = generate_auction_text(auction_engine.state, auction_engine.get_item_duration())
     keyboard = generate_bid_keyboard(price)
 
     try:
@@ -1810,27 +1810,22 @@ async def start_single_batch_item(bot, item):
             photo=photo_id,
             caption=text,
             reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
+            parse_mode="HTML"
         )
         current_auction["message_id"] = msg.message_id
-        
-        # Cancel existing timer task if any
+        state.message_id = msg.message_id
+
         if current_auction.get("timer_task"):
             current_auction["timer_task"].cancel()
-        
-        current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(bot))
-        
-        # Mark this item as started (0-based index, will be shown as +1 in notifications)
-        # Index will be incremented AFTER this item ends in run_batch_auction_loop
-        
-        # Notify batch progress to admin (shows current item number)
-        await notify_batch_progress(bot)
-        
+
+        timer_task = asyncio.create_task(auction_timer_loop(bot))
+        current_auction["timer_task"] = timer_task
+        state.timer_task = timer_task
+        auction_engine.set_timer_task(timer_task)
     except Exception as e:
-        logger.error(f"Failed to start batch item '{title}': {e}")
-        # Move to next item on error
-        current_auction["batch_current_index"] += 1
-        _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
+        logger.error(f"Failed to start batch item: {e}")
+        current_auction["active"] = False
+        state.active = False
 
 
 async def notify_batch_progress(bot):
