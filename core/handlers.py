@@ -23,7 +23,7 @@ NAME, PHONE, EMAIL, PICKUP = range(4)
 BIDDING_PRICE = 8
 
 
-def build_registration_handlers(store, current_auction, ADMIN_IDS):
+def build_registration_handlers(store, auction_engine, ADMIN_IDS):
     """
     Return a list of registration handler functions.
     Call this from main.py to wire up the ConversationHandler.
@@ -65,12 +65,12 @@ def build_registration_handlers(store, current_auction, ADMIN_IDS):
                     )
                     return ConversationHandler.END
 
-                if not current_auction["active"]:
+                if not auction_engine.state.active:
                     await update.message.reply_text("❌ 當前沒有進行中的拍賣。")
                     return ConversationHandler.END
 
                 await update.message.reply_text(
-                    f"🔥 <b>正在拍賣：{html.escape(current_auction['title'])}</b>\n\n"
+                    f"🔥 <b>正在拍賣：{html.escape(auction_engine.state.title or '?')}</b>\n\n"
                     f"請輸入您的 <b>出價金額</b> (純數字)：",
                     parse_mode=ParseMode.HTML
                 )
@@ -100,7 +100,7 @@ def build_registration_handlers(store, current_auction, ADMIN_IDS):
                     )
                     return ConversationHandler.END
 
-                if not current_auction["active"]:
+                if not auction_engine.state.active:
                     await update.message.reply_text("❌ 當前沒有進行中的拍賣。")
                     return ConversationHandler.END
 

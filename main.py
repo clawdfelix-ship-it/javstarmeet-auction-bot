@@ -2751,7 +2751,7 @@ async def main():
     application = Application.builder().token(TOKEN).build()
 
     # 註冊處理器（遷移到 core/handlers.py）
-    _reg_fns = build_registration_handlers(store, current_auction, ADMIN_IDS)
+    _reg_fns = build_registration_handlers(store, auction_engine, ADMIN_IDS)
     _start_reg, _get_name, _get_phone, _get_email, _get_pickup, _cancel_reg = _reg_fns
     reg_handler = ConversationHandler(
         entry_points=[
@@ -2769,7 +2769,7 @@ async def main():
     )
     
     # Admin auction creation handlers（遷移到 core/admin.py）
-    _admin_fns = build_admin_handlers(store, current_auction, ADMIN_IDS)
+    _admin_fns = build_admin_handlers(store, auction_engine, ADMIN_IDS)
     (_new_auction_start, _get_auction_photo, _get_auction_title, _get_auction_price, _get_bin_price, _cancel_admin) = _admin_fns
     auction_handler = ConversationHandler(
         entry_points=[

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 WAITING_PHOTO, WAITING_TITLE, WAITING_PRICE, WAITING_BIN_PRICE = range(4, 8)
 
 
-def build_admin_handlers(store, current_auction, ADMIN_IDS):
+def build_admin_handlers(store, auction_engine, ADMIN_IDS):
     """
     Return a list of admin handler functions.
     Call this from main.py to wire up the ConversationHandler.
