@@ -75,7 +75,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     if query.from_user.id not in ADMIN_IDS:
         return
 
-    if current_auction["active"]:
+    if auction_engine.state.active:
         await query.edit_message_caption("❌ 已有拍賣進行中，請先結束。")
         return
 
@@ -107,31 +107,31 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Sync engine state to current_auction for display/handlers
     state = auction_engine.state
-    current_auction["active"] = state.active
-    current_auction["title"] = state.title
-    current_auction["base_price"] = state.base_price
-    current_auction["current_price"] = state.current_price
-    current_auction["pending_price"] = state.pending_price
-    current_auction["pending_bidder"] = state.pending_bidder
-    current_auction["pending_bidder_name"] = state.pending_bidder_name
-    current_auction["bidders"] = state.bidders
-    current_auction["bin_price"] = state.bin_price
-    current_auction["bin_confirm_user_id"] = state.bin_confirm_user_id
-    current_auction["bin_confirm_expires_at"] = state.bin_confirm_expires_at
+    auction_engine.state.active = state.active
+    auction_engine.state.title = state.title
+    auction_engine.state.base_price = state.base_price
+    auction_engine.state.current_price = state.current_price
+    auction_engine.state.pending_price = state.pending_price
+    auction_engine.state.pending_bidder = state.pending_bidder
+    auction_engine.state.pending_bidder_name = state.pending_bidder_name
+    auction_engine.state.bidders = state.bidders
+    auction_engine.state.bin_price = state.bin_price
+    auction_engine.state.bin_confirm_user_id = state.bin_confirm_user_id
+    auction_engine.state.bin_confirm_expires_at = state.bin_confirm_expires_at
     current_auction["photo_id"] = state.photo_id
-    current_auction["highest_bidder"] = state.highest_bidder
-    current_auction["highest_bidder_name"] = state.highest_bidder_name
-    current_auction["start_time"] = state.start_time
-    current_auction["end_time"] = state.end_time
-    current_auction["session_id"] = state.session_id
-    current_auction["session_seq"] = state.session_seq
-    current_auction["chat_id"] = state.chat_id
-    current_auction["update_event"] = state.update_event
+    auction_engine.state.highest_bidder = state.highest_bidder
+    auction_engine.state.highest_bidder_name = state.highest_bidder_name
+    auction_engine.state.start_time = state.start_time
+    auction_engine.state.end_time = state.end_time
+    auction_engine.state.session_id = state.session_id
+    auction_engine.state.session_seq = state.session_seq
+    auction_engine.state.chat_id = state.chat_id
+    auction_engine.state.update_event = state.update_event
 
     # Get bot username for deep linking
     try:
         me = await context.bot.get_me()
-        current_auction["bot_username"] = me.username
+        auction_engine.state.bot_username = me.username
         state.bot_username = me.username
     except Exception as e:
         logger.error(f"Failed to get bot info: {e}")
@@ -149,10 +149,10 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=keyboard,
             parse_mode="HTML"
         )
-        current_auction["message_id"] = msg.message_id
+        auction_engine.state.message_id = msg.message_id
         state.message_id = msg.message_id
         timer_task = asyncio.create_task(auction_timer_loop(context.bot))
-        current_auction["timer_task"] = timer_task
+        auction_engine.state.timer_task = timer_task
         state.timer_task = timer_task
         auction_engine.set_timer_task(timer_task)
 
@@ -162,7 +162,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
         )
     except Exception as e:
         logger.error(f"Failed to start auction: {e}")
-        current_auction["active"] = False
+        auction_engine.state.active = False
         state.active = False
         await context.bot.send_message(
             chat_id=query.message.chat_id,
@@ -251,7 +251,7 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # Check auction active
-    if not current_auction["active"]:
+    if not auction_engine.state.active:
         await query.answer("❌ 拍賣已結束", show_alert=True)
         try:
             await query.message.delete()
@@ -340,7 +340,7 @@ async def handle_private_bid_text(update: Update, context: ContextTypes.DEFAULT_
 
     price = int(text)
 
-    if not current_auction["active"]:
+    if not auction_engine.state.active:
         await update.message.reply_text("❌ 拍賣已結束。")
         return ConversationHandler.END
 
@@ -391,7 +391,7 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = query.from_user
     data = query.data
 
-    if not current_auction.get("active"):
+    if not auction_engine.state.active:
         await query.answer("❌ 拍賣已結束", show_alert=True)
         return
 
@@ -418,8 +418,8 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         await query.answer(f"⚡️ 一口價 ${bin_price}，請確認", show_alert=True)
-        current_auction["bin_confirm_user_id"] = user.id
-        current_auction["bin_confirm_expires_at"] = datetime.now().timestamp() + 30
+        auction_engine.state.bin_confirm_user_id = user.id
+        auction_engine.state.bin_confirm_expires_at = datetime.now().timestamp() + 30
         try:
             await query.message.edit_reply_markup(reply_markup=build_bin_confirm_keyboard(bin_price, user.id))
         except Exception as e:
@@ -438,8 +438,8 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         await query.answer("已取消", show_alert=False)
-        current_auction["bin_confirm_user_id"] = None
-        current_auction["bin_confirm_expires_at"] = 0
+        auction_engine.state.bin_confirm_user_id = None
+        auction_engine.state.bin_confirm_expires_at = 0
         try:
             await query.message.edit_reply_markup(reply_markup=generate_bid_keyboard(current_auction.get("current_price", 0)))
         except Exception as e:
@@ -461,8 +461,8 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         now = datetime.now().timestamp()
         confirm_expires_at = current_auction.get("bin_confirm_expires_at", 0)
         if confirm_expires_at and now >= confirm_expires_at:
-            current_auction["bin_confirm_user_id"] = None
-            current_auction["bin_confirm_expires_at"] = 0
+            auction_engine.state.bin_confirm_user_id = None
+            auction_engine.state.bin_confirm_expires_at = 0
             await query.answer("⚠️ 確認已過期，請重新點擊一口價", show_alert=True)
             return
 
@@ -470,12 +470,12 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.answer("⚠️ 請先私訊機器人 /start 完成註冊", show_alert=True)
             return
 
-        if not current_auction.get("active"):
+        if not auction_engine.state.active:
             await query.answer("❌ 拍賣已結束", show_alert=True)
             return
 
-        current_auction["bin_confirm_user_id"] = None
-        current_auction["bin_confirm_expires_at"] = 0
+        auction_engine.state.bin_confirm_user_id = None
+        auction_engine.state.bin_confirm_expires_at = 0
 
         user_info = await store.get_user(user.id)
         winner_name = (user_info or {}).get("name") or user.first_name or ""
@@ -491,7 +491,7 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 break
         if not updated:
             bidders.append({"id": user.id, "name": winner_name, "price": bin_price, "time": datetime.now().timestamp()})
-        current_auction["bidders"] = bidders
+        auction_engine.state.bidders = bidders
 
         await end_auction_buyout(context.bot, user.id, winner_name, bin_price)
 
@@ -512,7 +512,7 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Check if active
-    if not current_auction["active"]:
+    if not auction_engine.state.active:
         await query.answer("❌ 拍賣已結束", show_alert=True)
         return
 
@@ -523,7 +523,7 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if user has registered
     if not await store.is_registered(user.id):
-        bot_username = current_auction.get("bot_username") or context.bot.username
+        bot_username = auction_engine.state.bot_username or context.bot.username
         if not bot_username:
             try:
                 me = await context.bot.get_me()
@@ -557,7 +557,7 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Redirect to private chat for bidding
-    bot_username = current_auction.get("bot_username") or context.bot.username
+    bot_username = auction_engine.state.bot_username or context.bot.username
     if not bot_username:
         try:
             me = await context.bot.get_me()
@@ -965,7 +965,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data == "admin_view_queue":
-        queue = current_auction.get("batch_queue", [])
+        queue = auction_engine.state.batch_queue or []
         if not queue:
             await query.message.edit_text("📋 隊列是空的。使用【Import Batch】匯入拍賣品。")
         else:
@@ -990,10 +990,10 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data == "admin_start_batch":
-        if not current_auction.get("batch_queue"):
+        if not auction_engine.state.batch_queue:
             await query.message.edit_text("❌ 請先【Import Batch】匯入拍賣品。")
             return
-        if current_auction.get("active"):
+        if auction_engine.state.active:
             await query.message.edit_text("❌ 已有拍賣正在進行中。")
             return
         await query.message.edit_text("🚀 正在啟動批次拍賣...")
@@ -1001,33 +1001,33 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data == "admin_pause":
-        if not current_auction.get("batch_mode"):
+        if not auction_engine.state.batch_mode:
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
-        if current_auction.get("batch_paused"):
+        if auction_engine.state.batch_paused:
             await query.message.edit_text("⚠️ 已經是暫停狀態。")
             return
-        current_auction["batch_paused"] = True
+        auction_engine.state.batch_paused = True
         await query.message.edit_text("⏸ 批次拍賣已暫停。")
         return
 
     elif data == "admin_resume":
-        if not current_auction.get("batch_mode"):
+        if not auction_engine.state.batch_mode:
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
-        if not current_auction.get("batch_paused"):
+        if not auction_engine.state.batch_paused:
             await query.message.edit_text("⚠️ 不是暫停狀態。")
             return
-        current_auction["batch_paused"] = False
+        auction_engine.state.batch_paused = False
         await query.message.edit_text("▶️ 批次拍賣已恢復！")
         return
 
     elif data == "admin_abort":
-        if not current_auction.get("batch_mode"):
+        if not auction_engine.state.batch_mode:
             await query.message.edit_text("❌ 目前沒有正在進行的批次拍賣。")
             return
-        current_auction["batch_abort"] = True
-        current_auction["batch_paused"] = False
+        auction_engine.state.batch_abort = True
+        auction_engine.state.batch_paused = False
         global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
         BATCH_PANEL_MESSAGE_ID = None
         BATCH_PANEL_CHAT_ID = None
@@ -1036,12 +1036,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "admin_batch_status":
         # Show batch status
-        queue = current_auction.get("batch_queue", [])
+        queue = auction_engine.state.batch_queue
         queue_len = len(queue)
-        if current_auction.get("batch_mode"):
-            idx = current_auction.get("batch_current_index", 0) + 1
-            title = html.escape(current_auction.get("title", "?"))
-            status = "⏸ 已暫停" if current_auction.get("batch_paused") else "▶️ 運行中"
+        if auction_engine.state.batch_mode:
+            idx = auction_engine.state.batch_current_index + 1
+            title = html.escape(auction_engine.state.title or "?")
+            status = "⏸ 已暫停" if auction_engine.state.batch_paused else "▶️ 運行中"
             text = (
                 f"📊 <b>批次狀態</b>\n\n"
                 f"📦 隊列：{queue_len} 件\n"
@@ -1092,12 +1092,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data == "admin_end_auction":
-        if not current_auction["active"]:
+        if not auction_engine.state.active:
             await query.message.edit_text("❌ 當前沒有進行中的拍賣。")
             return
-        if current_auction["timer_task"]:
-            current_auction["timer_task"].cancel()
-            current_auction["timer_task"] = None
+        if auction_engine.state.timer_task:
+            auction_engine.state.timer_task.cancel()
+            auction_engine.state.timer_task = None
         await end_auction(context.bot)
         await query.message.edit_text("✅ 已強制結束拍賣。")
         return
@@ -1115,19 +1115,19 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_admin_order_action(update, context)
 
     elif query.data == "admin_force_end":
-        if not current_auction["active"]:
+        if not auction_engine.state.active:
             await query.message.reply_text("❌ 當前沒有進行中的拍賣。")
             return
 
-        if current_auction["timer_task"]:
-            current_auction["timer_task"].cancel()
-            current_auction["timer_task"] = None
+        if auction_engine.state.timer_task:
+            auction_engine.state.timer_task.cancel()
+            auction_engine.state.timer_task = None
 
         await end_auction(context.bot)
         await query.message.reply_text("✅ 已強制結束拍賣。")
 
     elif query.data == "admin_end_session":
-        if current_auction["active"]:
+        if auction_engine.state.active:
             await query.message.edit_text("❌ 請先結束當前進行中的拍賣，再進行結算。")
             return
 
@@ -1198,7 +1198,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import platform
         from datetime import timedelta, timezone
 
-        status = "🟢 運行中" if current_auction["active"] else "⚪ 閒置"
+        status = "🟢 運行中" if auction_engine.state.active else "⚪ 閒置"
         db_type = "PostgreSQL 🐘" if store.is_pg else "SQLite/JSON 📁 (本地)"
         db_conn_str = DATABASE_URL
 
@@ -1247,12 +1247,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif query.data == "admin_force_end":
-        if not current_auction["active"]:
+        if not auction_engine.state.active:
             await query.message.edit_text("❌ 當前沒有進行中的拍賣。")
             return
-        if current_auction["timer_task"]:
-            current_auction["timer_task"].cancel()
-            current_auction["timer_task"] = None
+        if auction_engine.state.timer_task:
+            auction_engine.state.timer_task.cancel()
+            auction_engine.state.timer_task = None
         await end_auction(context.bot)
         await query.message.edit_text("✅ 已強制結束拍賣。")
         return
@@ -1266,14 +1266,14 @@ async def force_end_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id not in ADMIN_IDS:
         return
 
-    if not current_auction["active"]:
+    if not auction_engine.state.active:
         await update.message.reply_text("❌ 當前沒有進行中的拍賣。")
         return
 
     # Cancel timer task if running
-    if current_auction["timer_task"]:
-        current_auction["timer_task"].cancel()
-        current_auction["timer_task"] = None
+    if auction_engine.state.timer_task:
+        auction_engine.state.timer_task.cancel()
+        auction_engine.state.timer_task = None
     
     # Manually trigger end
     await end_auction(context.bot)
@@ -1299,15 +1299,15 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🔧 管理員選單":
         await admin_menu(update, context)
     else:
-        if current_auction["active"] and text.isdigit():
+        if auction_engine.state.active and text.isdigit():
             await handle_text_bid(update, context)
 
 async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not current_auction["active"] or not msg.text:
+    if not auction_engine.state.active or not msg.text:
         return
         
-    if msg.chat_id != current_auction["chat_id"]:
+    if msg.chat_id != auction_engine.state.chat_id:
         return
 
     # Check if this is a reply to the custom bid prompt
@@ -1370,10 +1370,10 @@ async def process_blind_bid(user, price, query=None, bot=None):
 
     # accepted — sync engine state back to current_auction for display callers
     state = auction_engine.state
-    current_auction["pending_price"] = state.pending_price
-    current_auction["pending_bidder"] = state.pending_bidder
-    current_auction["pending_bidder_name"] = state.pending_bidder_name
-    current_auction["bidders"] = state.bidders
+    auction_engine.state.pending_price = state.pending_price
+    auction_engine.state.pending_bidder = state.pending_bidder
+    auction_engine.state.pending_bidder_name = state.pending_bidder_name
+    auction_engine.state.bidders = state.bidders
 
 async def notify_previous_bidder(bot, previous_bidder_id, title, new_price, new_bidder_name):
     try:
@@ -1407,7 +1407,7 @@ async def start_next_queued_auction(bot):
 
     await asyncio.sleep(10)
 
-    if current_auction["active"]:
+    if auction_engine.state.active:
         queue.insert(0, item)
         await store.set_auction_queue(queue)
         return
@@ -1415,7 +1415,7 @@ async def start_next_queued_auction(bot):
     await start_auction_from_queue(bot, item)
 
 async def start_auction_from_queue(bot, item):
-    if current_auction["active"]:
+    if auction_engine.state.active:
         return
 
     title = item.get("title", "未知商品")
@@ -1429,32 +1429,32 @@ async def start_auction_from_queue(bot, item):
 
     session_id, session_seq = await store.get_next_session()
     target_chat_id = int(target_chat_id)
-    current_auction["active"] = True
-    current_auction["title"] = title
-    current_auction["base_price"] = price
-    current_auction["current_price"] = price
-    current_auction["pending_price"] = price   # 暗標：pending = base price initially
-    current_auction["pending_bidder"] = None
-    current_auction["pending_bidder_name"] = "無"
-    current_auction["bidders"] = []
-    current_auction["bin_price"] = bin_price
-    current_auction["bin_confirm_user_id"] = None
-    current_auction["bin_confirm_expires_at"] = 0
-    current_auction["photo_id"] = photo_id
-    current_auction["highest_bidder"] = None
-    current_auction["highest_bidder_name"] = "無"
-    current_auction["start_time"] = datetime.now()
-    current_auction["end_time"] = datetime.now().timestamp() + ITEM_DURATION
-    current_auction["session_id"] = session_id
-    current_auction["session_seq"] = session_seq
-    current_auction["chat_id"] = target_chat_id
+    auction_engine.state.active = True
+    auction_engine.state.title = title
+    auction_engine.state.base_price = price
+    auction_engine.state.current_price = price
+    auction_engine.state.pending_price = price   # 暗標：pending = base price initially
+    auction_engine.state.pending_bidder = None
+    auction_engine.state.pending_bidder_name = "無"
+    auction_engine.state.bidders = []
+    auction_engine.state.bin_price = bin_price
+    auction_engine.state.bin_confirm_user_id = None
+    auction_engine.state.bin_confirm_expires_at = 0
+    current_auction["photo_id"] = state.photo_id
+    auction_engine.state.highest_bidder = None
+    auction_engine.state.highest_bidder_name = "無"
+    auction_engine.state.start_time = datetime.now()
+    auction_engine.state.end_time = datetime.now().timestamp() + ITEM_DURATION
+    auction_engine.state.session_id = session_id
+    auction_engine.state.session_seq = session_seq
+    auction_engine.state.chat_id = target_chat_id
     if current_auction.get("update_event"):
-        current_auction["update_event"].clear()
+        auction_engine.state.update_event.clear()
 
     # Get bot username for deep linking
     try:
         me = await bot.get_me()
-        current_auction["bot_username"] = me.username
+        auction_engine.state.bot_username = me.username
     except Exception as e:
         logger.error(f"Failed to get bot username: {e}")
 
@@ -1468,8 +1468,8 @@ async def start_auction_from_queue(bot, item):
         reply_markup=keyboard,
         parse_mode=ParseMode.HTML
     )
-    current_auction["message_id"] = msg.message_id
-    current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(bot))
+    auction_engine.state.message_id = msg.message_id
+    auction_engine.state.timer_task = asyncio.create_task(auction_timer_loop(bot))
 
 async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
     """Execute buyout — delegate state management to AuctionEngine."""
@@ -1477,15 +1477,15 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
 
     # Sync engine state back to current_auction
     state = auction_engine.state
-    current_auction["_ending"] = state._ending
-    current_auction["active"] = state.active
-    current_auction["current_price"] = state.current_price
-    current_auction["highest_bidder"] = state.highest_bidder
-    current_auction["highest_bidder_name"] = state.highest_bidder_name
-    current_auction["bin_confirm_user_id"] = None
-    current_auction["bin_confirm_expires_at"] = 0
+    auction_engine.state._ending = state._ending
+    auction_engine.state.active = state.active
+    auction_engine.state.current_price = state.current_price
+    auction_engine.state.highest_bidder = state.highest_bidder
+    auction_engine.state.highest_bidder_name = state.highest_bidder_name
+    auction_engine.state.bin_confirm_user_id = None
+    auction_engine.state.bin_confirm_expires_at = 0
 
-    timer_task = current_auction.get("timer_task")
+    timer_task = auction_engine.state.timer_task
     if timer_task:
         try:
             timer_task.cancel()
@@ -1502,8 +1502,8 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
 
     try:
         await bot.edit_message_caption(
-            chat_id=current_auction["chat_id"],
-            message_id=current_auction["message_id"],
+            chat_id=auction_engine.state.chat_id,
+            message_id=auction_engine.state.message_id,
             caption=final_text,
             reply_markup=None,
             parse_mode="HTML"
@@ -1515,8 +1515,8 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
             await asyncio.sleep(5)
             try:
                 await bot.edit_message_caption(
-                    chat_id=current_auction["chat_id"],
-                    message_id=current_auction["message_id"],
+                    chat_id=auction_engine.state.chat_id,
+                    message_id=auction_engine.state.message_id,
                     caption=final_text,
                     reply_markup=None,
                     parse_mode="HTML"
@@ -1531,7 +1531,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
         "price": price,
         "time": datetime.now().isoformat(),
         "status": "pending",
-        "session_id": current_auction.get("session_id")
+        "session_id": auction_engine.state.session_id
     }
     await store.add_order(order)
 
@@ -1548,9 +1548,9 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
     except Exception as e:
         logger.error(f"Failed to DM winner (buyout): {e}")
 
-    current_auction["_ending"] = False
+    auction_engine.state._ending = False
 
-    if current_auction.get("batch_mode") and not current_auction.get("batch_abort"):
+    if auction_engine.state.batch_mode and not auction_engine.state.batch_abort:
         _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
     else:
         await start_next_queued_auction(bot)
@@ -1568,11 +1568,11 @@ async def end_auction(bot):
     title = state.title
 
     # Sync engine state back to current_auction for display
-    current_auction["active"] = state.active
-    current_auction["current_price"] = state.current_price
-    current_auction["highest_bidder"] = state.highest_bidder
-    current_auction["highest_bidder_name"] = state.highest_bidder_name
-    current_auction["_ending"] = state._ending
+    auction_engine.state.active = state.active
+    auction_engine.state.current_price = state.current_price
+    auction_engine.state.highest_bidder = state.highest_bidder
+    auction_engine.state.highest_bidder_name = state.highest_bidder_name
+    auction_engine.state._ending = state._ending
 
     # Build bidders list text
     if sorted_bidders:
@@ -1597,8 +1597,8 @@ async def end_auction(bot):
     edit_ok = False
     try:
         await bot.edit_message_caption(
-            chat_id=current_auction["chat_id"],
-            message_id=current_auction["message_id"],
+            chat_id=auction_engine.state.chat_id,
+            message_id=auction_engine.state.message_id,
             caption=final_text,
             reply_markup=None,
             parse_mode="HTML"
@@ -1612,8 +1612,8 @@ async def end_auction(bot):
             await asyncio.sleep(5)
             try:
                 await bot.edit_message_caption(
-                    chat_id=current_auction["chat_id"],
-                    message_id=current_auction["message_id"],
+                    chat_id=auction_engine.state.chat_id,
+                    message_id=auction_engine.state.message_id,
                     caption=final_text,
                     reply_markup=None,
                     parse_mode="HTML"
@@ -1624,7 +1624,7 @@ async def end_auction(bot):
         if not edit_ok:
             try:
                 await bot.send_message(
-                    chat_id=current_auction["chat_id"],
+                    chat_id=auction_engine.state.chat_id,
                     text=final_text,
                     parse_mode="HTML"
                 )
@@ -1639,7 +1639,7 @@ async def end_auction(bot):
             "price": price,
             "time": datetime.now().isoformat(),
             "status": "pending",
-            "session_id": current_auction.get("session_id")
+            "session_id": auction_engine.state.session_id
         }
         await store.add_order(order)
 
@@ -1656,15 +1656,15 @@ async def end_auction(bot):
         except Exception as e:
             logger.error(f"Failed to DM winner: {e}")
             await bot.send_message(
-                chat_id=current_auction["chat_id"],
+                chat_id=auction_engine.state.chat_id,
                 text=f"⚠️ 無法私聊得標者 (ID: {winner_id})，請主動聯繫管理員。"
             )
 
     # Reset ending flag
-    current_auction["_ending"] = False
+    auction_engine.state._ending = False
 
     # Check if batch mode is active and auto-advance to next item
-    if current_auction.get("batch_mode") and not current_auction.get("batch_abort"):
+    if auction_engine.state.batch_mode and not auction_engine.state.batch_abort:
         _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
     else:
         await start_next_queued_auction(bot)
@@ -1722,34 +1722,34 @@ async def run_batch_auction_loop(bot):
     await asyncio.sleep(PAUSE_BETWEEN_ITEMS)
 
     # Check if abort was requested while waiting
-    if current_auction.get("batch_abort"):
+    if auction_engine.state.batch_abort:
         await notify_batch_aborted(bot)
         return
 
     # Check if paused
-    if current_auction.get("batch_paused"):
+    if auction_engine.state.batch_paused:
         # Wait until resumed
-        while current_auction.get("batch_paused") and not current_auction.get("batch_abort"):
+        while auction_engine.state.batch_paused and not auction_engine.state.batch_abort:
             await asyncio.sleep(1)
-        if current_auction.get("batch_abort"):
+        if auction_engine.state.batch_abort:
             await notify_batch_aborted(bot)
             return
 
     # Increment index for the item we're about to start (0-based to 1-based)
-    current_auction["batch_current_index"] += 1
+    auction_engine.state.batch_current_index += 1
     
-    if current_auction["batch_current_index"] > len(current_auction["batch_queue"]):
+    if auction_engine.state.batch_current_index > len(auction_engine.state.batch_queue):
         # Batch complete
         await notify_batch_complete(bot)
         return
 
-    item = current_auction["batch_queue"][current_auction["batch_current_index"] - 1]  # -1 to convert 1-based index back to 0-based
+    item = auction_engine.state.batch_queue[auction_engine.state.batch_current_index - 1]  # -1 to convert 1-based index back to 0-based
     await start_single_batch_item(bot, item)
 
 
 async def start_single_batch_item(bot, item):
     """Start a single auction item from the batch queue."""
-    if current_auction.get("batch_abort"):
+    if auction_engine.state.batch_abort:
         return
 
     title = item.get("title", "未知商品")
@@ -1760,7 +1760,7 @@ async def start_single_batch_item(bot, item):
 
     if not photo_id or not target_chat_id:
         logger.error(f"Batch item missing photo_id or target_chat_id: {title}")
-        current_auction["batch_current_index"] += 1
+        auction_engine.state.batch_current_index += 1
         _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
         return
 
@@ -1771,32 +1771,32 @@ async def start_single_batch_item(bot, item):
 
     # Sync engine state to current_auction for display
     state = auction_engine.state
-    current_auction["active"] = state.active
-    current_auction["title"] = state.title
-    current_auction["base_price"] = state.base_price
-    current_auction["current_price"] = state.current_price
-    current_auction["pending_price"] = state.pending_price
-    current_auction["pending_bidder"] = state.pending_bidder
-    current_auction["pending_bidder_name"] = state.pending_bidder_name
-    current_auction["bidders"] = state.bidders
-    current_auction["bin_price"] = state.bin_price
-    current_auction["bin_confirm_user_id"] = state.bin_confirm_user_id
-    current_auction["bin_confirm_expires_at"] = state.bin_confirm_expires_at
+    auction_engine.state.active = state.active
+    auction_engine.state.title = state.title
+    auction_engine.state.base_price = state.base_price
+    auction_engine.state.current_price = state.current_price
+    auction_engine.state.pending_price = state.pending_price
+    auction_engine.state.pending_bidder = state.pending_bidder
+    auction_engine.state.pending_bidder_name = state.pending_bidder_name
+    auction_engine.state.bidders = state.bidders
+    auction_engine.state.bin_price = state.bin_price
+    auction_engine.state.bin_confirm_user_id = state.bin_confirm_user_id
+    auction_engine.state.bin_confirm_expires_at = state.bin_confirm_expires_at
     current_auction["photo_id"] = state.photo_id
-    current_auction["highest_bidder"] = state.highest_bidder
-    current_auction["highest_bidder_name"] = state.highest_bidder_name
-    current_auction["start_time"] = state.start_time
-    current_auction["end_time"] = state.end_time
-    current_auction["session_id"] = state.session_id
-    current_auction["session_seq"] = state.session_seq
-    current_auction["chat_id"] = state.chat_id
-    current_auction["_ending"] = state._ending
+    auction_engine.state.highest_bidder = state.highest_bidder
+    auction_engine.state.highest_bidder_name = state.highest_bidder_name
+    auction_engine.state.start_time = state.start_time
+    auction_engine.state.end_time = state.end_time
+    auction_engine.state.session_id = state.session_id
+    auction_engine.state.session_seq = state.session_seq
+    auction_engine.state.chat_id = state.chat_id
+    auction_engine.state._ending = state._ending
     if current_auction.get("update_event"):
-        current_auction["update_event"].clear()
+        auction_engine.state.update_event.clear()
 
     try:
         me = await bot.get_me()
-        current_auction["bot_username"] = me.username
+        auction_engine.state.bot_username = me.username
         state.bot_username = me.username
     except Exception as e:
         logger.error(f"Failed to get bot username: {e}")
@@ -1812,19 +1812,19 @@ async def start_single_batch_item(bot, item):
             reply_markup=keyboard,
             parse_mode="HTML"
         )
-        current_auction["message_id"] = msg.message_id
+        auction_engine.state.message_id = msg.message_id
         state.message_id = msg.message_id
 
-        if current_auction.get("timer_task"):
-            current_auction["timer_task"].cancel()
+        if auction_engine.state.timer_task:
+            auction_engine.state.timer_task.cancel()
 
         timer_task = asyncio.create_task(auction_timer_loop(bot))
-        current_auction["timer_task"] = timer_task
+        auction_engine.state.timer_task = timer_task
         state.timer_task = timer_task
         auction_engine.set_timer_task(timer_task)
     except Exception as e:
         logger.error(f"Failed to start batch item: {e}")
-        current_auction["active"] = False
+        auction_engine.state.active = False
         state.active = False
 
 
@@ -1834,8 +1834,8 @@ async def notify_batch_progress(bot):
     await show_batch_admin_panel(bot)
 
     # Also send a detailed progress message
-    queue_len = len(current_auction["batch_queue"])
-    current_idx = current_auction["batch_current_index"] + 1  # 1-indexed for display
+    queue_len = len(auction_engine.state.batch_queue)
+    current_idx = auction_engine.state.batch_current_index + 1  # 1-indexed for display
     title = current_auction.get("title", "?")
     
     # Try to find admin chat_id from config or use first admin
@@ -1857,16 +1857,16 @@ async def notify_batch_progress(bot):
 
 async def notify_batch_complete(bot):
     """Notify when batch auction is complete."""
-    total_items = len(current_auction["batch_queue"])
+    total_items = len(auction_engine.state.batch_queue)
     admin_id = ADMIN_IDS[0] if ADMIN_IDS else None
     
     # Reset batch state
-    current_auction["batch_mode"] = False
-    current_auction["batch_queue"] = []
-    current_auction["batch_current_index"] = 0
-    current_auction["batch_paused"] = False
-    current_auction["batch_abort"] = False
-    current_auction["scheduled_start"] = None
+    auction_engine.state.batch_mode = False
+    auction_engine.state.batch_queue = []
+    auction_engine.state.batch_current_index = 0
+    auction_engine.state.batch_paused = False
+    auction_engine.state.batch_abort = False
+    auction_engine.state.scheduled_start = None
     
     # Clear admin panel tracking
     global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
@@ -1889,12 +1889,12 @@ async def notify_batch_aborted(bot):
     admin_id = ADMIN_IDS[0] if ADMIN_IDS else None
     
     # Reset batch state
-    current_auction["batch_mode"] = False
-    current_auction["batch_queue"] = []
-    current_auction["batch_current_index"] = 0
-    current_auction["batch_paused"] = False
-    current_auction["batch_abort"] = False
-    current_auction["scheduled_start"] = None
+    auction_engine.state.batch_mode = False
+    auction_engine.state.batch_queue = []
+    auction_engine.state.batch_current_index = 0
+    auction_engine.state.batch_paused = False
+    auction_engine.state.batch_abort = False
+    auction_engine.state.scheduled_start = None
     
     if admin_id:
         try:
@@ -2007,11 +2007,11 @@ async def import_batch_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Store in current_auction batch_queue (without photo_id yet - need to download)
     # For now, store the items - photo download will happen at start_batch time
-    current_auction["batch_queue"] = parsed_items
-    current_auction["batch_mode"] = False  # Will be set to True when started
-    current_auction["batch_current_index"] = 0
-    current_auction["batch_paused"] = False
-    current_auction["batch_abort"] = False
+    auction_engine.state.batch_queue = parsed_items
+    auction_engine.state.batch_mode = False  # Will be set to True when started
+    auction_engine.state.batch_current_index = 0
+    auction_engine.state.batch_paused = False
+    auction_engine.state.batch_abort = False
 
     await update.message.reply_text(
         f"✅ <b>已匯入 {len(parsed_items)} 件拍賣品：</b>\n\n" +
@@ -2029,15 +2029,15 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ 權限不足")
         return
 
-    if not current_auction.get("batch_queue"):
+    if not auction_engine.state.batch_queue:
         await update.message.reply_text("❌ 請先使用 <code>/import_batch</code> 匯入拍賣品。", parse_mode=ParseMode.HTML)
         return
 
     args = context.args
     if not args:
         # Show current schedule or prompt for datetime
-        if current_auction.get("scheduled_start"):
-            sched_time = current_auction["scheduled_start"]
+        if auction_engine.state.scheduled_start:
+            sched_time = auction_engine.state.scheduled_start
             await update.message.reply_text(
                 f"📅 <b>已設定拍賣時間：</b>\n{sched_time}\n\n"
                 f"使用 <code>/start_batch</code> 可立即開始（跳過排程）。",
@@ -2078,10 +2078,10 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Set scheduled time
-    current_auction["scheduled_start"] = scheduled_dt.strftime("%Y-%m-%d %H:%M")
+    auction_engine.state.scheduled_start = scheduled_dt.strftime("%Y-%m-%d %H:%M")
 
     # Calculate estimated end time
-    queue_len = len(current_auction["batch_queue"])
+    queue_len = len(auction_engine.state.batch_queue)
     # Each item: ITEM_DURATION (25s) + PAUSE_BETWEEN_ITEMS (3s) = 28s
     # Last item doesn't need pause after
     total_duration_seconds = queue_len * ITEM_DURATION + (queue_len - 1) * PAUSE_BETWEEN_ITEMS
@@ -2110,16 +2110,16 @@ async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⛔ 權限不足")
         return
 
-    if not current_auction.get("batch_queue"):
+    if not auction_engine.state.batch_queue:
         await update.message.reply_text("❌ 請先使用 <code>/import_batch</code> 匯入拍賣品。", parse_mode=ParseMode.HTML)
         return
 
-    if current_auction.get("active"):
+    if auction_engine.state.active:
         await update.message.reply_text("❌ 已有拍賣正在進行中，請先結束後再試。")
         return
 
     # Check if there's a scheduled time and if it's reached
-    scheduled_start = current_auction.get("scheduled_start")
+    scheduled_start = auction_engine.state.scheduled_start
     if scheduled_start:
         try:
             sched_dt = datetime.strptime(scheduled_start, "%Y-%m-%d %H:%M")
@@ -2153,13 +2153,13 @@ async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # Set batch mode
-    current_auction["batch_mode"] = True
-    current_auction["batch_current_index"] = 0
-    current_auction["batch_paused"] = False
-    current_auction["batch_abort"] = False
+    auction_engine.state.batch_mode = True
+    auction_engine.state.batch_current_index = 0
+    auction_engine.state.batch_paused = False
+    auction_engine.state.batch_abort = False
 
     # Add target_chat_id to each item in queue
-    for item in current_auction["batch_queue"]:
+    for item in auction_engine.state.batch_queue:
         item["target_chat_id"] = target_chat_id
 
     # Get bot instance for the batch loop
@@ -2167,7 +2167,7 @@ async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Pre-download all images if they are URLs
     await update.message.reply_text("📥 正在下載圖片中...")
-    for i, item in enumerate(current_auction["batch_queue"]):
+    for i, item in enumerate(auction_engine.state.batch_queue):
         if item.get("photo_url") and not item.get("photo_id"):
             photo_id = await download_image_to_file_id(bot, item["photo_url"])
             if photo_id:
@@ -2185,7 +2185,7 @@ async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         item["target_type"] = target_type
 
     # Start the first item immediately
-    queue_len = len(current_auction["batch_queue"])
+    queue_len = len(auction_engine.state.batch_queue)
     await update.message.reply_text(
         f"🚀 <b>批次拍賣開始！</b>\n\n"
         f"📦 件數：{queue_len} 件\n"
@@ -2203,7 +2203,7 @@ async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await show_batch_admin_panel(bot, chat_id=update.effective_chat.id)
 
     # Start first item
-    item = current_auction["batch_queue"][0]
+    item = auction_engine.state.batch_queue[0]
     await start_single_batch_item(bot, item)
 
 
@@ -2214,15 +2214,15 @@ async def pause_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⛔ 權限不足")
         return
 
-    if not current_auction.get("batch_mode"):
+    if not auction_engine.state.batch_mode:
         await update.message.reply_text("❌ 目前沒有正在進行的批次拍賣。")
         return
 
-    if current_auction.get("batch_paused"):
+    if auction_engine.state.batch_paused:
         await update.message.reply_text("⚠️ 批次拍賣已經是暫停狀態。")
         return
 
-    current_auction["batch_paused"] = True
+    auction_engine.state.batch_paused = True
     
     await update.message.reply_text(
         f"⏸ <b>批次拍賣已暫停</b>",
@@ -2239,15 +2239,15 @@ async def resume_batch_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("⛔ 權限不足")
         return
 
-    if not current_auction.get("batch_mode"):
+    if not auction_engine.state.batch_mode:
         await update.message.reply_text("❌ 目前沒有正在進行的批次拍賣。")
         return
 
-    if not current_auction.get("batch_paused"):
+    if not auction_engine.state.batch_paused:
         await update.message.reply_text("⚠️ 批次拍賣不是在暫停狀態。")
         return
 
-    current_auction["batch_paused"] = False
+    auction_engine.state.batch_paused = False
     
     await update.message.reply_text(
         f"▶️ <b>批次拍賣已恢復！</b>",
@@ -2264,12 +2264,12 @@ async def abort_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⛔ 權限不足")
         return
 
-    if not current_auction.get("batch_mode"):
+    if not auction_engine.state.batch_mode:
         await update.message.reply_text("❌ 目前沒有正在進行的批次拍賣。")
         return
 
-    current_auction["batch_abort"] = True
-    current_auction["batch_paused"] = False  # Unpause so loop can exit
+    auction_engine.state.batch_abort = True
+    auction_engine.state.batch_paused = False  # Unpause so loop can exit
 
     await update.message.reply_text(
         f"🛑 <b>批次拍賣已終止</b>",
@@ -2288,9 +2288,9 @@ async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("⛔ 權限不足")
         return
 
-    if not current_auction.get("batch_mode"):
+    if not auction_engine.state.batch_mode:
         # Show queue status even if not started
-        queue = current_auction.get("batch_queue", [])
+        queue = auction_engine.state.batch_queue
         if not queue:
             await update.message.reply_text("❌ 目前沒有任何批次拍賣品。\n使用 <code>/import_batch</code> 匯入拍賣品。", parse_mode=ParseMode.HTML)
             return
@@ -2306,12 +2306,12 @@ async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    queue_len = len(current_auction["batch_queue"])
-    current_idx = current_auction["batch_current_index"] + 1  # 1-indexed
+    queue_len = len(auction_engine.state.batch_queue)
+    current_idx = auction_engine.state.batch_current_index + 1  # 1-indexed
     current_title = current_auction.get("title", "?")
-    status = "⏸ 已暫停" if current_auction.get("batch_paused") else "▶️ 運行中"
+    status = "⏸ 已暫停" if auction_engine.state.batch_paused else "▶️ 運行中"
     
-    remaining = queue_len - current_auction["batch_current_index"]
+    remaining = queue_len - auction_engine.state.batch_current_index
     
     await update.message.reply_text(
         f"📋 <b>批次拍賣狀態</b>\n\n"
@@ -2705,7 +2705,7 @@ async def run_web_server():
 
 async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Handle data received from WebApp
-    if not current_auction["active"]:
+    if not auction_engine.state.active:
         return
 
     data = update.effective_message.web_app_data.data
@@ -2717,7 +2717,7 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     price = int(data)
     
     # Process bid directly (blind mode - validate against pending_price)
-    if price <= current_auction["pending_price"]:
+    if price <= auction_engine.state.pending_price:
         # WebApp doesn't show alert easily unless we reply
         pass  # Silent ignore
     
