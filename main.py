@@ -11,7 +11,7 @@ from email_utils import send_email
 from store import create_store
 import asyncio
 from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text
-from core.text import generate_auction_text, build_bin_confirm_keyboard, generate_bid_keyboard, truncate_name_prefix
+from core.text import generate_auction_text, build_bin_confirm_keyboard, generate_bid_keyboard, truncate_name_prefix, generate_numpad_keyboard
 
 # Telegram
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ForceReply
