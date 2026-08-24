@@ -114,3 +114,64 @@ def truncate_name_prefix(name: str, length: int = 4) -> str:
 
 
 from datetime import datetime
+
+
+
+def generate_numpad_keyboard(current_value, user_id):
+    # Layout:
+    # 1 2 3
+    # 4 5 6
+    # 7 8 9
+    # ⬅️ 0 ✅
+    # ❌ Cancel
+    
+    # Pre-calculate possible next values to encode in buttons
+    # This allows the client to send the *next* state directly, 
+    # reducing server-side calculation dependency and race conditions slightly.
+    # BUT standard callback buttons are still round-trip.
+    # To truly optimize, we need to handle "clicks" fast.
+    
+    keyboard = []
+    # Rows 1-3
+    for i in range(0, 9, 3):
+        row = []
+        for j in range(1, 4):
+            num = i + j
+            # Logic: If current is "0", next is "num". Else "current" + "num"
+            # We calculate the NEXT value here and put it in callback_data
+            # format: numpad_{user_id}_{NEXT_VALUE}_set
+            
+            if current_value == "0":
+                next_val = str(num)
+            else:
+                next_val = current_value + str(num)
+                if len(next_val) > 9: next_val = current_value # Prevent overflow in button
+            
+            row.append(InlineKeyboardButton(str(num), callback_data=f"numpad_{user_id}_{next_val}_set"))
+        keyboard.append(row)
+        
+    # Row 4
+    # Back button logic
+    if len(current_value) > 1:
+        back_val = current_value[:-1]
+    else:
+        back_val = "0"
+        
+    # Zero button logic
+    if current_value == "0":
+        zero_val = "0"
+    else:
+        zero_val = current_value + "0"
+        if len(zero_val) > 9: zero_val = current_value
+
+    row4 = [
+        InlineKeyboardButton("⬅️", callback_data=f"numpad_{user_id}_{back_val}_set"),
+        InlineKeyboardButton("0", callback_data=f"numpad_{user_id}_{zero_val}_set"),
+        InlineKeyboardButton("✅ 確認", callback_data=f"numpad_{user_id}_{current_value}_enter")
+    ]
+    keyboard.append(row4)
+    
+    # Row 5
+    keyboard.append([InlineKeyboardButton("❌ 取消", callback_data=f"numpad_{user_id}_{current_value}_cancel")])
+    
+    return InlineKeyboardMarkup(keyboard)
