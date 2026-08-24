@@ -2369,7 +2369,7 @@ async def export_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id not in ADMIN_IDS:
         return
 
-    message = update.effective_message
+    message = update.effective_message or update.message
     
     users = await store.get_all_users()
     si = io.StringIO()
@@ -2495,7 +2495,7 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id not in ADMIN_IDS:
         return
 
-    message = update.effective_message
+    message = update.effective_message or update.message
     
     # Export Users
     users = await store.get_all_users()
