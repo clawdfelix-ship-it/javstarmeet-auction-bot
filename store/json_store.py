@@ -32,6 +32,10 @@ class JsonStore(Store):
     def is_pg(self) -> bool:
         return False
 
+    async def connect(self) -> None:
+        # JsonStore is synchronous, no connection needed
+        pass
+
     def _load(self) -> None:
         if os.path.exists(self._db_file):
             try:
