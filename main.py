@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from store import create_store
 import asyncio
-from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text, ITEM_DURATION, PAUSE_BETWEEN_ITEMS
+from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text, ITEM_DURATION, PAUSE_BETWEEN_ITEMS, batch_state
 from core.handlers import build_registration_handlers
 from core.admin import build_admin_handlers
 from core.settlement import process_settlement_by_date as _settle_by_date, process_daily_settlement as _settle_daily
@@ -56,9 +56,7 @@ BIDDING_PRICE = 8
 WAITING_MEMBERS_CSV = 9
 
 # --- Constants ---
-# --- Batch Admin Panel Message Tracking ---
-BATCH_PANEL_MESSAGE_ID = None  # chat_id, message_id of the admin panel
-BATCH_PANEL_CHAT_ID = None
+
 
 # --- Global Auction State (legacy — gradually migrating to AuctionEngine) ---
 current_auction: dict = {}
@@ -118,7 +116,6 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     auction_engine.state.bin_price = state.bin_price
     auction_engine.state.bin_confirm_user_id = state.bin_confirm_user_id
     auction_engine.state.bin_confirm_expires_at = state.bin_confirm_expires_at
-    current_auction["photo_id"] = state.photo_id
     auction_engine.state.highest_bidder = state.highest_bidder
     auction_engine.state.highest_bidder_name = state.highest_bidder_name
     auction_engine.state.start_time = state.start_time
@@ -1028,9 +1025,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         auction_engine.state.batch_abort = True
         auction_engine.state.batch_paused = False
-        global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
-        BATCH_PANEL_MESSAGE_ID = None
-        BATCH_PANEL_CHAT_ID = None
+        batch_state.clear()
         await query.message.edit_text("🛑 批次拍賣已終止。")
         return
 
@@ -1440,7 +1435,6 @@ async def start_auction_from_queue(bot, item):
     auction_engine.state.bin_price = bin_price
     auction_engine.state.bin_confirm_user_id = None
     auction_engine.state.bin_confirm_expires_at = 0
-    current_auction["photo_id"] = state.photo_id
     auction_engine.state.highest_bidder = None
     auction_engine.state.highest_bidder_name = "無"
     auction_engine.state.start_time = datetime.now()
@@ -1782,7 +1776,6 @@ async def start_single_batch_item(bot, item):
     auction_engine.state.bin_price = state.bin_price
     auction_engine.state.bin_confirm_user_id = state.bin_confirm_user_id
     auction_engine.state.bin_confirm_expires_at = state.bin_confirm_expires_at
-    current_auction["photo_id"] = state.photo_id
     auction_engine.state.highest_bidder = state.highest_bidder
     auction_engine.state.highest_bidder_name = state.highest_bidder_name
     auction_engine.state.start_time = state.start_time
@@ -1868,11 +1861,8 @@ async def notify_batch_complete(bot):
     auction_engine.state.batch_abort = False
     auction_engine.state.scheduled_start = None
     
-    # Clear admin panel tracking
-    global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
-    BATCH_PANEL_MESSAGE_ID = None
-    BATCH_PANEL_CHAT_ID = None
-    
+    batch_state.clear()
+
     if admin_id:
         try:
             await bot.send_message(
@@ -2195,9 +2185,7 @@ async def start_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     # Reset admin panel tracking so it sends a new message
-    global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
-    BATCH_PANEL_MESSAGE_ID = None
-    BATCH_PANEL_CHAT_ID = None
+    batch_state.clear()
 
     # Show admin batch control panel
     await show_batch_admin_panel(bot, chat_id=update.effective_chat.id)
@@ -2275,10 +2263,7 @@ async def abort_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🛑 <b>批次拍賣已終止</b>",
         parse_mode=ParseMode.HTML
     )
-    # Clear admin panel
-    global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
-    BATCH_PANEL_MESSAGE_ID = None
-    BATCH_PANEL_CHAT_ID = None
+    batch_state.clear()
 
 
 async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

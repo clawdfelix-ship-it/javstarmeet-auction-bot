@@ -10,8 +10,19 @@ logger = logging.getLogger(__name__)
 ITEM_DURATION = 25
 PAUSE_BETWEEN_ITEMS = 3
 
-BATCH_PANEL_MESSAGE_ID = None
-BATCH_PANEL_CHAT_ID = None
+
+# --- Batch Admin Panel State (replaces module-level globals) ---
+class BatchState:
+    """Thread-unsafe singleton for batch admin panel message tracking."""
+    def __init__(self):
+        self.panel_message_id: int | None = None
+        self.panel_chat_id: int | None = None
+
+    def clear(self):
+        self.panel_message_id = None
+        self.panel_chat_id = None
+
+batch_state = BatchState()
 
 
 def get_batch_state(current_auction: dict) -> str:
@@ -158,8 +169,6 @@ def build_batch_admin_text(state: str, current_auction: dict) -> str:
 
 async def show_batch_admin_panel(bot, chat_id=None, message_id=None, update_existing=True):
     """Send or edit the admin batch control panel message."""
-    global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
-
     state = get_batch_state(current_auction)
     text = build_batch_admin_text(state, current_auction)
     keyboard = build_batch_admin_keyboard(state)
@@ -170,12 +179,12 @@ async def show_batch_admin_panel(bot, chat_id=None, message_id=None, update_exis
         return
 
     try:
-        if update_existing and BATCH_PANEL_MESSAGE_ID and BATCH_PANEL_CHAT_ID:
+        if update_existing and batch_state.panel_message_id and batch_state.panel_chat_id:
             # Try to edit existing panel message
             try:
                 await bot.edit_message_text(
-                    chat_id=BATCH_PANEL_CHAT_ID,
-                    message_id=BATCH_PANEL_MESSAGE_ID,
+                    chat_id=batch_state.panel_chat_id,
+                    message_id=batch_state.panel_message_id,
                     text=text,
                     reply_markup=keyboard,
                     parse_mode=ParseMode.HTML
@@ -183,8 +192,7 @@ async def show_batch_admin_panel(bot, chat_id=None, message_id=None, update_exis
                 return
             except Exception:
                 # Message not found or can't be edited - send new one
-                BATCH_PANEL_MESSAGE_ID = None
-                BATCH_PANEL_CHAT_ID = None
+                batch_state.clear()
 
         # Send new panel message
         msg = await bot.send_message(
@@ -193,8 +201,8 @@ async def show_batch_admin_panel(bot, chat_id=None, message_id=None, update_exis
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
-        BATCH_PANEL_MESSAGE_ID = msg.message_id
-        BATCH_PANEL_CHAT_ID = target_chat_id
+        batch_state.panel_message_id = msg.message_id
+        batch_state.panel_chat_id = target_chat_id
 
     except Exception as e:
         logger.error(f"Failed to show batch admin panel: {e}")
@@ -241,9 +249,7 @@ async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TY
         current_auction["batch_current_index"] = 0
         current_auction["batch_paused"] = False
         current_auction["batch_abort"] = False
-        global BATCH_PANEL_MESSAGE_ID, BATCH_PANEL_CHAT_ID
-        BATCH_PANEL_MESSAGE_ID = None
-        BATCH_PANEL_CHAT_ID = None
+        batch_state.clear()
         await query.message.edit_text(
             f"✅ 已清空隊列（{queue_len} 件已移除）。",
             parse_mode=ParseMode.HTML
