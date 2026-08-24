@@ -1171,10 +1171,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif query.data == "admin_export":
+        await query.answer()  # Acknowledge callback immediately
         await export_data(update, context)
         return
 
     elif query.data == "admin_export_members":
+        await query.answer()  # Acknowledge callback immediately
         await export_members(update, context)
         return
 
