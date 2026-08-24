@@ -2739,6 +2739,7 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 # --- 主程式 ---
 async def main():
+    global auction_engine
     # 創建並連接數據庫
     store = await create_store(DATABASE_URL)
     await store.connect()
