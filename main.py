@@ -559,57 +559,6 @@ current_auction = {
     "batch_timer_task": None,      # asyncio task for scheduled batch start
 }
 
-# --- Auction State Persistence ---
-AUCTION_STATE_FILE = "auction_state.json"
-
-def save_auction_state():
-    """Persist current_auction to JSON for crash recovery."""
-    try:
-        # Only save if auction was ever activated (has title/chat_id)
-        if current_auction.get("title") and current_auction.get("chat_id"):
-            with open(AUCTION_STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(current_auction, f, ensure_ascii=False, indent=2, default=str)
-            logger.info(f"Auction state saved: {current_auction.get('title')}")
-        elif os.path.exists(AUCTION_STATE_FILE):
-            # Clean up stale file if no active auction
-            try:
-                os.remove(AUCTION_STATE_FILE)
-            except Exception:
-                logger.exception("Failed to remove stale auction state file")
-    except Exception as e:
-        logger.error(f"Failed to save auction state: {e}")
-
-def load_auction_state():
-    """Load auction state from JSON. Returns True if a valid active auction was restored."""
-    if not os.path.exists(AUCTION_STATE_FILE):
-        return False
-    try:
-        with open(AUCTION_STATE_FILE, "r", encoding="utf-8") as f:
-            loaded = json.load(f)
-        if loaded.get("active") and loaded.get("title"):
-            # Restore into current_auction (preserve Event/lock objects)
-            preserved_keys = {"update_event": current_auction["update_event"], "timer_task": None}
-            current_auction.update(loaded)
-            current_auction["update_event"] = preserved_keys["update_event"]
-            current_auction["timer_task"] = None
-            current_auction["_ending"] = False
-            # Recalculate end_time relative to now if it was stored as a timestamp
-            if isinstance(current_auction.get("end_time"), (int, float)):
-                saved_end = current_auction["end_time"]
-                remaining = saved_end - datetime.now().timestamp()
-                # If auction would have already expired, treat as finished
-                if remaining < 5:
-                    current_auction["active"] = False
-                    logger.info(f"Loaded auction '{loaded.get('title')}' has expired; skipping resume.")
-                    save_auction_state()  # will clean up
-                    return False
-                # else: still has time, can resume
-            logger.info(f"Auction state restored: {loaded.get('title')}, remaining {remaining:.0f}s")
-            return True
-    except Exception as e:
-        logger.error(f"Failed to load auction state: {e}")
-    return False
-
 # Lock to prevent race conditions when multiple users bid simultaneously
 auction_lock = asyncio.Lock()
 
