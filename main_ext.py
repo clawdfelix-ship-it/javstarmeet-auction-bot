@@ -42,6 +42,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# --- Safe fire-and-forget task wrapper ---
+def _safe_create_task(coro, name: str = "anonymous"):
+    """Create a task that logs if it fails, preventing silent fire-and-forget deaths."""
+    task = asyncio.create_task(coro)
+
+    async def _log_on_error(t: asyncio.Task):
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[task:{name}] unexpected error: {e}")
+
+    asyncio.create_task(_log_on_error(task), name=f"error-logger-{name}")
+    return task
+
+
 # States
 NAME, PHONE, EMAIL, PICKUP = range(4)
 WAITING_PHOTO, WAITING_TITLE, WAITING_PRICE, WAITING_BIN_PRICE = range(4, 8)
@@ -1314,7 +1332,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode=ParseMode.HTML
         )
         current_auction["message_id"] = msg.message_id
-        current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(context.bot))
+        _safe_create_task(auction_timer_loop(context.bot), "timer")
         
         # Admin feedback
         await context.bot.send_message(
@@ -2809,7 +2827,7 @@ async def start_auction_from_queue(bot, item):
         parse_mode=ParseMode.HTML
     )
     current_auction["message_id"] = msg.message_id
-    current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(bot))
+    _safe_create_task(auction_timer_loop(bot), "timer")
 
 def truncate_name_prefix(name: str, length: int = 4) -> str:
     if not name:
@@ -2900,7 +2918,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
 
             OpenClaw 拍賣系統
             """
-            asyncio.create_task(asyncio.to_thread(send_email, user_email, email_subject, email_body))
+            _safe_create_task(asyncio.to_thread(send_email, user_email, email_subject, email_body), "email")
     except Exception as e:
         logger.error(f"Failed to DM winner (buyout): {e}")
 
@@ -2908,7 +2926,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
     save_auction_state()
 
     if current_auction.get("batch_mode") and not current_auction.get("batch_abort"):
-        asyncio.create_task(run_batch_auction_loop(bot))
+        _safe_create_task(run_batch_auction_loop(bot), "batch_loop")
     else:
         await start_next_queued_auction(bot)
 
@@ -3039,7 +3057,7 @@ async def end_auction(bot):
                 """
                 
                 # Use asyncio.to_thread to prevent blocking the event loop
-                asyncio.create_task(asyncio.to_thread(send_email, user_email, email_subject, email_body))
+                _safe_create_task(asyncio.to_thread(send_email, user_email, email_subject, email_body), "email")
 
         except Exception as e:
             logger.error(f"Failed to DM winner: {e}")
@@ -3054,7 +3072,7 @@ async def end_auction(bot):
     
     # Check if batch mode is active and auto-advance to next item
     if current_auction.get("batch_mode") and not current_auction.get("batch_abort"):
-        asyncio.create_task(run_batch_auction_loop(bot))
+        _safe_create_task(run_batch_auction_loop(bot), "batch_loop")
     else:
         await start_next_queued_auction(bot)
 
@@ -3152,7 +3170,7 @@ async def start_single_batch_item(bot, item):
         logger.error(f"Batch item missing photo_id or target_chat_id: {title}")
         # Error path: increment index then move to next
         current_auction["batch_current_index"] += 1
-        asyncio.create_task(run_batch_auction_loop(bot))
+        _safe_create_task(run_batch_auction_loop(bot), "batch_loop")
         return
 
     # Get session
@@ -3208,7 +3226,7 @@ async def start_single_batch_item(bot, item):
         if current_auction.get("timer_task"):
             current_auction["timer_task"].cancel()
         
-        current_auction["timer_task"] = asyncio.create_task(auction_timer_loop(bot))
+        _safe_create_task(auction_timer_loop(bot), "timer")
         
         # Mark this item as started (0-based index, will be shown as +1 in notifications)
         # Index will be incremented AFTER this item ends in run_batch_auction_loop
@@ -3220,7 +3238,7 @@ async def start_single_batch_item(bot, item):
         logger.error(f"Failed to start batch item '{title}': {e}")
         # Move to next item on error
         current_auction["batch_current_index"] += 1
-        asyncio.create_task(run_batch_auction_loop(bot))
+        _safe_create_task(run_batch_auction_loop(bot), "batch_loop")
 
 
 async def notify_batch_progress(bot):
