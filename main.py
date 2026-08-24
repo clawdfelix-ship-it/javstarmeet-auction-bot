@@ -12,6 +12,7 @@ import asyncio
 from core.batch import get_batch_state, build_batch_admin_keyboard, build_batch_admin_text, ITEM_DURATION, PAUSE_BETWEEN_ITEMS
 from core.handlers import build_registration_handlers
 from core.admin import build_admin_handlers
+from core.settlement import process_settlement_by_date as _settle_by_date, process_daily_settlement as _settle_daily
 from core.text import generate_auction_text, build_bin_confirm_keyboard, generate_bid_keyboard, truncate_name_prefix, generate_numpad_keyboard
 
 # Telegram
@@ -1207,7 +1208,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "confirm_settle_date":
         date_str = context.user_data.get('settle_date', datetime.now().strftime('%Y-%m-%d'))
-        await process_settlement_by_date(update, context, date_str)
+        await _settle_by_date(store, query, date_str, context.bot)
         return
 
     elif query.data == "cancel_end_session":
@@ -2867,7 +2868,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(handle_numpad_click, pattern="^numpad_"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^settle_date_"))
-    application.add_handler(CallbackQueryHandler(process_daily_settlement, pattern="^confirm_settle_date$"))
+    application.add_handler(CallbackQueryHandler(lambda u, c: _settle_daily(store, u.callback_query, u.effective_bot), pattern="^confirm_settle_date$"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^cancel_end_session$"))
     application.add_handler(CallbackQueryHandler(handle_batch_callback, pattern="^batch_"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^adm_ord_"))
