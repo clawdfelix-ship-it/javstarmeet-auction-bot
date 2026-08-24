@@ -130,7 +130,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
         me = await context.bot.get_me()
         auction_engine.state.bot_username = me.username
         state.bot_username = me.username
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         logger.error(f"Failed to get bot info: {e}")
 
     text = generate_auction_text(auction_engine.state, auction_engine.get_item_duration())
@@ -157,7 +157,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
             chat_id=query.message.chat_id,
             text=f"✅ 拍賣已發布到【{target_type}群組】！"
         )
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         logger.error(f"Failed to start auction: {e}")
         auction_engine.state.active = False
         state.active = False
@@ -252,7 +252,7 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer("❌ 拍賣已結束", show_alert=True)
         try:
             await query.message.delete()
-        except Exception:
+        except telegram.error.TelegramError:
             logger.exception("Failed to delete message for ended auction")
         return
 
@@ -279,13 +279,13 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 reply_markup=generate_numpad_keyboard(next_val_str, target_user_id),
                 parse_mode=ParseMode.HTML
             )
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             logger.warning("Numpad edit failed: %s", e)
             
     elif action == "cancel":
         try:
             await query.message.delete()
-        except Exception:
+        except telegram.error.TelegramError:
             logger.exception("Failed to delete cancel message")
         return
         
@@ -299,7 +299,7 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             await asyncio.sleep(2)
             try:
                 await msg.delete()
-            except Exception:
+            except telegram.error.TelegramError:
                 logger.exception("Failed to delete error message")
             return
             
@@ -307,7 +307,7 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Delete numpad message first
         try:
             await query.message.delete()
-        except Exception:
+        except telegram.error.TelegramError:
             logger.exception("Failed to delete numpad message on bid submit")
         
         # Process bid
@@ -318,7 +318,7 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 chat_id=user.id,
                 text=f"✅ 成功出價：${price}！\n如有更高出價，您將收到通知。"
             )
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             logger.warning(f"Failed to send numpad bid confirmation: {e}")
         return
 
@@ -395,7 +395,7 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         auction_chat_id = int(current_auction.get("chat_id"))
         auction_message_id = int(current_auction.get("message_id"))
-    except Exception:
+    except (ValueError, TypeError):
         await query.answer("⚠️ 拍賣狀態已重置，請管理員重新開拍賣", show_alert=True)
         return
 
@@ -419,14 +419,14 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         auction_engine.state.bin_confirm_expires_at = datetime.now().timestamp() + 30
         try:
             await query.message.edit_reply_markup(reply_markup=build_bin_confirm_keyboard(bin_price, user.id))
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             logger.warning(f"Failed to show bin confirm keyboard: {e}")
         return
 
     if data.startswith("bin_cancel_"):
         try:
             confirm_uid = int(data.split("_", 2)[2])
-        except Exception:
+        except (ValueError, IndexError):
             await query.answer("❌ 無效操作", show_alert=True)
             return
 
@@ -439,14 +439,14 @@ async def handle_bin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         auction_engine.state.bin_confirm_expires_at = 0
         try:
             await query.message.edit_reply_markup(reply_markup=generate_bid_keyboard(current_auction.get("current_price", 0)))
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             logger.warning(f"Failed to restore bid keyboard: {e}")
         return
 
     if data.startswith("bin_execute_"):
         try:
             confirm_uid = int(data.split("_", 2)[2])
-        except Exception:
+        except (ValueError, IndexError):
             await query.answer("❌ 無效操作", show_alert=True)
             return
 
@@ -525,7 +525,7 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 me = await context.bot.get_me()
                 bot_username = me.username
-            except Exception:
+            except telegram.error.TelegramError:
                 logger.warning("Failed to get bot username for register link")
         if bot_username:
             url = f"https://t.me/{bot_username}?start=register"
@@ -559,7 +559,7 @@ async def handle_bid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             me = await context.bot.get_me()
             bot_username = me.username
-        except Exception:
+        except telegram.error.TelegramError:
             logger.warning("Failed to get bot username for bid link")
 
     if bot_username:
@@ -610,7 +610,7 @@ async def my_orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 dt = datetime.fromisoformat(date_str)
                 date_key = dt.strftime('%Y-%m-%d')
-            except Exception:
+            except ValueError:
                 logger.exception("Failed to parse order date")
                 date_key = "未知日期"
         elif isinstance(date_str, datetime):
@@ -718,7 +718,7 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if update.message:
             await update.message.delete()
-    except Exception:
+    except telegram.error.TelegramError:
         logger.exception("Failed to delete admin command message")
 
     # Send the admin panel as a new message
@@ -1314,7 +1314,7 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Delete the prompt message to clean up
             try:
                 await msg.reply_to_message.delete()
-            except Exception:
+            except telegram.error.TelegramError:
                 logger.exception("Failed to delete bid prompt message")
 
     # If user wants to DISABLE direct text bidding, we only allow valid replies
@@ -1337,7 +1337,7 @@ async def handle_text_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_blind_bid(user, bid_price, None, context.bot)
     try:
         await msg.delete()
-    except Exception:
+    except telegram.error.TelegramError:
         logger.exception("Failed to delete bid text message")
 
 async def process_blind_bid(user, price, query=None, bot=None):
@@ -1390,7 +1390,7 @@ async def notify_previous_bidder(bot, previous_bidder_id, title, new_price, new_
                 text=notify_text,
                 parse_mode=ParseMode.HTML
             )
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         logger.warning(f"Failed to notify outbid user {previous_bidder_id}: {e}")
 
 async def start_next_queued_auction(bot):
@@ -1449,7 +1449,7 @@ async def start_auction_from_queue(bot, item):
     try:
         me = await bot.get_me()
         auction_engine.state.bot_username = me.username
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         logger.error(f"Failed to get bot username: {e}")
 
     text = generate_auction_text(auction_engine.state, ITEM_DURATION)
@@ -1483,6 +1483,8 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
     if timer_task:
         try:
             timer_task.cancel()
+        except asyncio.CancelledError:
+            pass  # Already cancelled or done
         except Exception:
             logger.exception("Failed to cancel timer task")
 
@@ -1502,7 +1504,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
             reply_markup=None,
             parse_mode="HTML"
         )
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         err_str = str(e)
         logger.warning(f"Failed to edit auction message (buyout): {e}")
         if "429" in err_str:
@@ -1515,7 +1517,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
                     reply_markup=None,
                     parse_mode="HTML"
                 )
-            except Exception as e2:
+            except telegram.error.TelegramError as e2:
                 logger.error(f"Retry also failed (buyout): {e2}")
 
     order = {
@@ -1539,7 +1541,7 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
             f"拍賣系統會另外再發送付款連結到您的 Email，請留意查收。"
         )
         await bot.send_message(chat_id=winner_id, text=msg, parse_mode="HTML")
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         logger.error(f"Failed to DM winner (buyout): {e}")
 
     auction_engine.state._ending = False
@@ -1598,7 +1600,7 @@ async def end_auction(bot):
             parse_mode="HTML"
         )
         edit_ok = True
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         err_str = str(e)
         logger.warning(f"Failed to edit auction message: {e}")
         if "429" in err_str:
@@ -1613,7 +1615,7 @@ async def end_auction(bot):
                     parse_mode="HTML"
                 )
                 edit_ok = True
-            except Exception as e2:
+            except telegram.error.TelegramError as e2:
                 logger.error(f"Retry also failed: {e2}")
         if not edit_ok:
             try:
@@ -1622,7 +1624,7 @@ async def end_auction(bot):
                     text=final_text,
                     parse_mode="HTML"
                 )
-            except Exception as e2:
+            except telegram.error.TelegramError as e2:
                 logger.error(f"Failed to send fallback message: {e2}")
 
     if winner_id:
@@ -1647,7 +1649,7 @@ async def end_auction(bot):
                 f"拍賣結束後，我們會另外再發送付款連結到您的 Email，請留意查收。"
             )
             await bot.send_message(chat_id=winner_id, text=msg, parse_mode="HTML")
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             logger.error(f"Failed to DM winner: {e}")
             await bot.send_message(
                 chat_id=auction_engine.state.chat_id,
@@ -1706,8 +1708,11 @@ async def download_image_to_file_id(bot, url: str) -> str:
         
         return msg.photo[-1].file_id
         
-    except Exception as e:
+    except (OSError, asyncio.TimeoutError) as e:
         logger.error(f"Failed to download image from {url}: {e}")
+        return None
+    except telegram.error.TelegramError as e:
+        logger.error(f"Failed to upload image to bot from {url}: {e}")
         return None
 
 async def run_batch_auction_loop(bot):
@@ -1791,7 +1796,7 @@ async def start_single_batch_item(bot, item):
         me = await bot.get_me()
         auction_engine.state.bot_username = me.username
         state.bot_username = me.username
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         logger.error(f"Failed to get bot username: {e}")
 
     text = generate_auction_text(auction_engine.state, auction_engine.get_item_duration())
@@ -1815,7 +1820,7 @@ async def start_single_batch_item(bot, item):
         auction_engine.state.timer_task = timer_task
         state.timer_task = timer_task
         auction_engine.set_timer_task(timer_task)
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         logger.error(f"Failed to start batch item: {e}")
         auction_engine.state.active = False
         state.active = False
@@ -1844,7 +1849,7 @@ async def notify_batch_progress(bot):
                      f"模式：{'運行中' if not current_auction.get('batch_paused') else '⏸ 已暫停'}",
                 parse_mode=ParseMode.HTML
             )
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             logger.warning(f"Failed to notify admin of batch progress: {e}")
 
 
@@ -1870,7 +1875,7 @@ async def notify_batch_complete(bot):
                 text=f"✅ <b>批次拍賣完成！</b>\n\n共完成 {total_items} 件拍賣品",
                 parse_mode=ParseMode.HTML
             )
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             logger.warning(f"Failed to notify admin of batch complete: {e}")
 
 
@@ -1893,7 +1898,7 @@ async def notify_batch_aborted(bot):
                 text="🛑 <b>批次拍賣已終止</b>\n\n隊列已清空。",
                 parse_mode=ParseMode.HTML
             )
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             logger.warning(f"Failed to notify admin of batch abort: {e}")
 
 
@@ -2354,7 +2359,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"訊息：{message_text}",
             parse_mode=ParseMode.HTML
         )
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         logger.error(f"Failed to send broadcast: {e}")
         await update.message.reply_text(f"❌ 廣播發送失敗：{e}")
 
@@ -2427,13 +2432,16 @@ async def import_members_receive(update: Update, context: ContextTypes.DEFAULT_T
     try:
         tg_file = await context.bot.get_file(doc.file_id)
         data = await tg_file.download_as_bytearray()
-    except Exception as e:
+    except telegram.error.TelegramError as e:
+        await message.reply_text(f"❌ 下載檔案失敗：{e}")
+        return ConversationHandler.END
+    except OSError as e:
         await message.reply_text(f"❌ 下載檔案失敗：{e}")
         return ConversationHandler.END
 
     try:
         text = bytes(data).decode("utf-8-sig")
-    except Exception:
+    except UnicodeDecodeError:
         text = bytes(data).decode("utf-8", errors="replace")
 
     reader = csv.DictReader(io.StringIO(text))
@@ -2455,7 +2463,7 @@ async def import_members_receive(update: Update, context: ContextTypes.DEFAULT_T
 
         try:
             uid = int(uid_raw)
-        except Exception:
+        except ValueError:
             skipped += 1
             bad_rows.append((idx, "invalid user_id"))
             continue
@@ -2470,6 +2478,7 @@ async def import_members_receive(update: Update, context: ContextTypes.DEFAULT_T
             await store.register_user(uid, info)
             ok += 1
         except Exception as e:
+            # store.register_user can raise various DB-specific exceptions
             skipped += 1
             bad_rows.append((idx, f"db error: {e}"))
 
@@ -2552,7 +2561,7 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = int(context.args[0])
         await store.add_blacklist(target_id)
         await update.message.reply_text(f"🚫 已封鎖用戶 {target_id}")
-    except Exception:
+    except (ValueError, IndexError):
         logger.exception("Failed to parse /ban arguments")
         await update.message.reply_text("用法: /ban <user_id>")
 
@@ -2562,7 +2571,7 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = int(context.args[0])
         await store.remove_blacklist(target_id)
         await update.message.reply_text(f"✅ 已解封用戶 {target_id}")
-    except Exception:
+    except (ValueError, IndexError):
         logger.exception("Failed to parse /unban arguments")
         await update.message.reply_text("用法: /unban <user_id>")
 
@@ -2720,14 +2729,14 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=user.id,
             text=f"✅ 成功出價：${price}！\n如有更高出價，您將收到通知。"
         )
-    except Exception as e:
+    except telegram.error.TelegramError as e:
         logger.warning(f"Failed to send webapp bid confirmation: {e}")
     
     # Optional: Send confirmation in chat? process_bid usually updates the main message.
     # But we might want to delete the "service message" that Telegram sends when WebApp data is received.
     try:
         await update.effective_message.delete()
-    except Exception:
+    except telegram.error.TelegramError:
         logger.exception("Failed to delete webapp bid confirmation message")
 
 # --- 主程式 ---
