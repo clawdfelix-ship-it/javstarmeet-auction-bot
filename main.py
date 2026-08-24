@@ -52,11 +52,7 @@ WAITING_PHOTO, WAITING_TITLE, WAITING_PRICE, WAITING_BIN_PRICE = range(4, 8)
 BIDDING_PRICE = 8
 WAITING_MEMBERS_CSV = 9
 
-# --- Store Class (Async Postgres / JSON) ---
-
-ITEM_DURATION = 25        # seconds per auction item
-PAUSE_BETWEEN_ITEMS = 3  # seconds pause between items in batch mode
-
+# --- Constants ---
 # --- Batch Admin Panel Message Tracking ---
 BATCH_PANEL_MESSAGE_ID = None  # chat_id, message_id of the admin panel
 BATCH_PANEL_CHAT_ID = None
