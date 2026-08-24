@@ -1040,13 +1040,13 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📌 進度：Item {idx}/{queue_len}\n"
                 f"📝 當前：{title}\n"
                 f"🔘 狀態：{status}\n"
-                f"🕐 排程：{auction_engine.state.scheduled_start or "無"}"
+                f"🕐 排程：{auction_engine.state.scheduled_start or '無'}"
             )
         else:
             text = (
                 f"📊 <b>批次狀態</b>\n\n"
                 f"📦 隊列：{queue_len} 件\n"
-                f"🕐 排程：{auction_engine.state.scheduled_start or "未設定"}"
+                f"🕐 排程：{auction_engine.state.scheduled_start or '未設定'}"
             )
         await query.message.edit_text(text, parse_mode=ParseMode.HTML)
         return
@@ -2286,7 +2286,7 @@ async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             f"📋 <b>批次拍賣狀態</b>\n\n"
             f"📦 隊列中的拍賣品：{queue_len} 件\n"
-            f"🕐 排程時間：{auction_engine.state.scheduled_start or "未設定"}\n"
+            f"🕐 排程時間：{auction_engine.state.scheduled_start or '未設定'}\n"
             f"📢 發佈群組：{auction_engine.state.batch_target_group}\n\n"
             f"💡 使用 <code>/start_batch</code> 開始拍賣。",
             parse_mode=ParseMode.HTML
@@ -2306,7 +2306,7 @@ async def batch_status_command(update: Update, context: ContextTypes.DEFAULT_TYP
         f"當前：{html.escape(current_title)}\n"
         f"狀態：{status}\n"
         f"剩餘：{remaining} 件\n"
-        f"🕐 排程：{auction_engine.state.scheduled_start or "無"}",
+        f"🕐 排程：{auction_engine.state.scheduled_start or '無'}",
         parse_mode=ParseMode.HTML
     )
     # Also show/update the admin panel with buttons
