@@ -1,7 +1,7 @@
 """Auction state dataclass."""
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional, Union
 
 
 @dataclass
@@ -9,10 +9,10 @@ class AuctionItem:
     """A single auction item in the batch queue."""
     title: str
     price: int
-    photo_id: str | None = None
+    photo_id: Optional[str] = None
     bin_price: int = 0
-    photo_url: str | None = None
-    target_chat_id: int | None = None
+    photo_url: Optional[str] = None
+    target_chat_id: Optional[int] = None
     target_type: str = "prod"  # "prod" or "test"
 
 
@@ -20,38 +20,38 @@ class AuctionItem:
 class AuctionState:
     """Holds the current auction state (mirrors current_auction global dict)."""
     active: bool = False
-    start_time: datetime | None = None
-    end_time: float | None = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[float] = None
     title: str = ""
-    photo_id: str | None = None
+    photo_id: Optional[str] = None
     base_price: int = 0
     current_price: int = 0
     bin_price: int = 0
     pending_price: int = 0
-    pending_bidder: int | None = None
+    pending_bidder: Optional[int] = None
     pending_bidder_name: str = "無"
-    bidders: list[dict] = field(default_factory=list)
-    highest_bidder: int | None = None
+    bidders: list = field(default_factory=list)
+    highest_bidder: Optional[int] = None
     highest_bidder_name: str = "無"
-    message_id: int | None = None
-    chat_id: int | None = None
+    message_id: Optional[int] = None
+    chat_id: Optional[int] = None
     timer_task: Any = None
     update_event: Any = None
-    session_id: str | None = None
+    session_id: Optional[str] = None
     session_seq: int = 0
-    bot_username: str | None = None
+    bot_username: Optional[str] = None
     _ending: bool = False
-    bin_confirm_user_id: int | None = None
+    bin_confirm_user_id: Optional[int] = None
     bin_confirm_expires_at: float = 0
 
     # Batch auction state
     batch_mode: bool = False
-    batch_queue: list[AuctionItem | dict] = field(default_factory=list)
+    batch_queue: list = field(default_factory=list)
     batch_current_index: int = 0
     batch_paused: bool = False
     batch_abort: bool = False
-    batch_target_group: str | None = None
-    scheduled_start: str | None = None
+    batch_target_group: Optional[str] = None
+    scheduled_start: Optional[str] = None
     batch_timer_task: Any = None
 
     def to_dict(self) -> dict:

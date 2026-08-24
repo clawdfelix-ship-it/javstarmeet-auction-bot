@@ -1,5 +1,6 @@
 """Configuration loader - loads from environment variables."""
 import os
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,15 +10,15 @@ BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS: list[int] = [int(x) for x in os.getenv("ADMIN_IDS", "582328026").split(",")]
 
 # Database
-DATABASE_URL: str | None = os.getenv("DATABASE_URL")
+DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
 DATA_PATH: str = os.getenv("DATA_PATH", "data.json")
 
 # Group IDs
-PROD_GROUP_ID: int | None = None  # resolved from store at runtime
-TEST_GROUP_ID: int | None = None
+PROD_GROUP_ID: Optional[int] = None  # resolved from store at runtime
+TEST_GROUP_ID: Optional[int] = None
 
 # WebApp
-WEBAPP_URL: str | None = os.getenv("WEBAPP_URL")
+WEBAPP_URL: Optional[str] = os.getenv("WEBAPP_URL")
 
 # Batch auction constants
 ITEM_DURATION: int = 25   # seconds per auction item

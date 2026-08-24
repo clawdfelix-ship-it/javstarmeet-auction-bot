@@ -2,6 +2,7 @@
 import logging
 import os
 import asyncio
+from typing import Optional
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -26,7 +27,7 @@ class TelegramAdapter:
         self.admin_ids = admin_ids
         self.engine = engine
         self.store = store
-        self.app: Application | None = None
+        self.app: Optional[Application] = None
 
     async def start(self):
         """Start polling."""

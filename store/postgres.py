@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 try:
     import asyncpg
@@ -20,7 +20,7 @@ class PostgresStore(Store):
 
     def __init__(self, database_url: str):
         self._database_url = database_url
-        self._pool: asyncpg.Pool | None = None
+        self._pool: Optional[asyncpg.Pool] = None
 
     @property
     def is_pg(self) -> bool:
@@ -110,7 +110,7 @@ class PostgresStore(Store):
                 SET name=EXCLUDED.name, phone=EXCLUDED.phone, email=EXCLUDED.email, pickup=EXCLUDED.pickup
             """, user_id, info['name'], info['phone'], info.get('email', ''), info['pickup'])
 
-    async def get_user(self, user_id: int) -> dict | None:
+    async def get_user(self, user_id: int) -> Optional[dict]:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
             if row:

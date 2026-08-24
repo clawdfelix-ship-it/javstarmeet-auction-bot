@@ -2,6 +2,7 @@
 import asyncio
 import html
 import logging
+from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -16,8 +17,8 @@ PAUSE_BETWEEN_ITEMS = 3
 class BatchState:
     """Thread-unsafe singleton for batch admin panel message tracking."""
     def __init__(self):
-        self.panel_message_id: int | None = None
-        self.panel_chat_id: int | None = None
+        self.panel_message_id: Optional[int] = None
+        self.panel_chat_id: Optional[int] = None
 
     def clear(self):
         self.panel_message_id = None

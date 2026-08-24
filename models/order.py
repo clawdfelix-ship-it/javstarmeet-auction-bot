@@ -1,7 +1,7 @@
 """Order dataclass."""
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass
@@ -11,8 +11,8 @@ class Order:
     item: str
     price: int
     status: str  # pending, won, paid, shipped, cancelled
-    created_at: datetime | None = None
-    session_id: str | None = None
+    created_at: Optional[datetime] = None
+    session_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Order":

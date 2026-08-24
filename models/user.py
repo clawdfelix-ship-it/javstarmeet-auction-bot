@@ -1,7 +1,7 @@
 """User dataclass."""
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass
@@ -11,7 +11,7 @@ class User:
     phone: str
     email: str = ""
     pickup: str = ""
-    created_at: datetime | None = None
+    created_at: Optional[datetime] = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "User":

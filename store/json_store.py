@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from filelock import FileLock
 
@@ -55,7 +55,7 @@ class JsonStore(Store):
         self._data["users"][str(user_id)] = info
         self._save()
 
-    async def get_user(self, user_id: int) -> dict | None:
+    async def get_user(self, user_id: int) -> Optional[dict]:
         return self._data["users"].get(str(user_id))
 
     async def is_registered(self, user_id: int) -> bool:

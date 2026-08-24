@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Tuple
 
 from models.auction import AuctionState, AuctionItem
 
@@ -352,13 +352,13 @@ class AuctionEngine:
     def get_title(self) -> str:
         return self.state.title
 
-    def get_chat_id(self) -> int | None:
+    def get_chat_id(self) -> Optional[int]:
         return self.state.chat_id
 
-    def get_message_id(self) -> int | None:
+    def get_message_id(self) -> Optional[int]:
         return self.state.message_id
 
-    def get_bot_username(self) -> str | None:
+    def get_bot_username(self) -> Optional[str]:
         return self.state.bot_username
 
     def set_bot_username(self, username: str) -> None:
@@ -386,7 +386,7 @@ class AuctionEngine:
         self.state.bin_confirm_user_id = None
         self.state.bin_confirm_expires_at = 0
 
-    def get_bin_confirm(self) -> tuple[int | None, float]:
+    def get_bin_confirm(self) -> Tuple[Optional[int], float]:
         return self.state.bin_confirm_user_id, self.state.bin_confirm_expires_at
 
     def set_chat_id(self, chat_id: int) -> None:
@@ -395,7 +395,7 @@ class AuctionEngine:
     def get_item_duration(self) -> int:
         return self._item_duration
 
-    def get_session(self) -> tuple[str | None, int]:
+    def get_session(self) -> Tuple[Optional[str], int]:
         return self.state.session_id, self.state.session_seq
 
     def get_pending_bidder_name(self) -> str:

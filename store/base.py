@@ -1,6 +1,6 @@
 """Abstract store interface."""
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 
 class Store(ABC):
@@ -15,7 +15,7 @@ class Store(ABC):
     async def register_user(self, user_id: int, info: dict) -> None: ...
 
     @abstractmethod
-    async def get_user(self, user_id: int) -> dict | None: ...
+    async def get_user(self, user_id: int) -> Optional[dict]: ...
 
     @abstractmethod
     async def is_registered(self, user_id: int) -> bool: ...
