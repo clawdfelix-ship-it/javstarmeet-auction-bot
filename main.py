@@ -2807,7 +2807,8 @@ async def main():
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^settle_date_"))
     application.add_handler(CallbackQueryHandler(lambda u, c: _settle_daily(store, u.callback_query, u.effective_bot), pattern="^confirm_settle_date$"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^cancel_end_session$"))
-    application.add_handler(CallbackQueryHandler(handle_batch_callback, pattern="^batch_"))
+    # FIXED: handle_batch_callback was undefined - comment out until implemented
+    # application.add_handler(CallbackQueryHandler(handle_batch_callback, pattern="^batch_"))
     application.add_handler(CallbackQueryHandler(admin_callback, pattern="^adm_ord_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_text))
     application.add_handler(CommandHandler("export", export_data))
