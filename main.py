@@ -87,7 +87,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Determine target group
     target_type = "正式"
-    if query.data == "start_auction_test":
+    if query.data in ("start_auction_test", "start_charity_test"):
         target_chat_id = await store.get_config("test_group_id")
         target_type = "測試"
     else:
