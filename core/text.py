@@ -14,10 +14,21 @@ def generate_auction_text(state: AuctionState, remaining_seconds: float) -> str:
 
     bin_text = f"\n⚡️ 一口價：<b>${bin_price}</b>" if bin_price > 0 else ""
 
+    # Snap displayed countdown to nearest UPDATE_POINT threshold so we never
+    # show e.g. 00:07 between 10s and 5s ticks. The timer fires exactly at
+    # each threshold, so anything in between would be a stale half-second.
     if remaining_seconds <= 0:
         time_str = "00:00"
     else:
-        mins, secs = divmod(int(remaining_seconds), 60)
+        from core.auction import UPDATE_POINTS
+        snapped = None
+        for point in reversed(UPDATE_POINTS):  # ascending: [1,2,3,4,5,10,15,20,25,30,45,60]
+            if remaining_seconds >= point:
+                snapped = point
+                break
+        if snapped is None:
+            snapped = int(remaining_seconds)  # <1s left, show actual
+        mins, secs = divmod(snapped, 60)
         time_str = f"{mins:02}:{secs:02}"
 
     return (

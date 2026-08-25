@@ -340,13 +340,15 @@ class AuctionEngine:
                         next_point = point
                         break
                 if next_point is not None:
-                    wait_time = min(remaining - next_point, 1.0)
+                    # Wait until we cross the next threshold — no 1s clamp
+                    # (clamping caused stalls between thresholds, e.g. 7s freeze)
+                    wait_time = max(0.1, remaining - next_point)
                 else:
                     wait_time = 0.1
             else:
                 wait_time = 1.0
 
-            wait_time = max(0.1, min(wait_time, 1.0))
+            wait_time = max(0.1, wait_time)
 
             try:
                 await asyncio.wait_for(
