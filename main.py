@@ -669,6 +669,7 @@ def build_admin_keyboard():
         # 📦 Auction section
         [
             InlineKeyboardButton("➕ 新增單件", callback_data="admin_add_single"),
+            InlineKeyboardButton("🎁 福利拍賣", callback_data="admin_charity_single"),
             InlineKeyboardButton("📥 批量匯入", callback_data="admin_import_batch"),
             InlineKeyboardButton("📋 查看隊列", callback_data="admin_view_queue"),
         ],
