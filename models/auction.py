@@ -43,6 +43,7 @@ class AuctionState:
     _ending: bool = False
     bin_confirm_user_id: Optional[int] = None
     bin_confirm_expires_at: float = 0
+    is_charity: bool = False
 
     # Batch auction state
     batch_mode: bool = False
@@ -78,6 +79,7 @@ class AuctionState:
             "_ending": self._ending,
             "bin_confirm_user_id": self.bin_confirm_user_id,
             "bin_confirm_expires_at": self.bin_confirm_expires_at,
+            "is_charity": self.is_charity,
             "batch_mode": self.batch_mode,
             "batch_queue": self.batch_queue,
             "batch_current_index": self.batch_current_index,

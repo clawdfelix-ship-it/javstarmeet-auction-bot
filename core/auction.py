@@ -124,6 +124,7 @@ class AuctionEngine:
         base_price: int,
         bin_price: int,
         target_chat_id: int,
+        is_charity: bool = False,
     ) -> None:
         """Initialize and start a new auction."""
         async with self._lock:
@@ -143,6 +144,7 @@ class AuctionEngine:
             self.state.highest_bidder_name = "無"
             self.state.start_time = datetime.now()
             self.state.end_time = datetime.now().timestamp() + self._item_duration
+            self.state.is_charity = is_charity
             self.state.session_id = session_id
             self.state.session_seq = session_seq
             self.state.chat_id = target_chat_id
