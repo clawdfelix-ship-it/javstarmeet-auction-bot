@@ -27,6 +27,14 @@ def build_admin_handlers(store, auction_engine, ADMIN_IDS):
             await message.reply_text("⛔ 權限不足")
             return ConversationHandler.END
 
+        # 🔧 FIX: entering normal flow — explicitly clear charity flag and any
+        # leftover auction fields so a prior charity session can't pollute.
+        context.user_data.pop('is_charity', None)
+        context.user_data.pop('auc_photo', None)
+        context.user_data.pop('auc_title', None)
+        context.user_data.pop('auc_price', None)
+        context.user_data.pop('auc_bin_price', None)
+
         if update.callback_query:
             await update.callback_query.answer()
         await message.reply_text("請發送拍賣品的 <b>圖片</b>：", parse_mode=ParseMode.HTML)
@@ -87,6 +95,13 @@ def build_admin_handlers(store, auction_engine, ADMIN_IDS):
         return ConversationHandler.END
 
     async def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # 🔧 FIX: clear all auction state on cancel so flags don't leak
+        # into the next /new_auction or admin flow.
+        context.user_data.pop('is_charity', None)
+        context.user_data.pop('auc_photo', None)
+        context.user_data.pop('auc_title', None)
+        context.user_data.pop('auc_price', None)
+        context.user_data.pop('auc_bin_price', None)
         await update.message.reply_text("已取消上架流程。")
         return ConversationHandler.END
 

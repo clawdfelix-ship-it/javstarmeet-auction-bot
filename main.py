@@ -79,10 +79,11 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     price = context.user_data.get('auc_price', 0)
     bin_price = context.user_data.get('auc_bin_price', 0)
     photo_id = context.user_data.get('auc_photo')
-    # Determine is_charity from the callback data first, fall back to user_data.
-    # Consume the user_data flag (pop it) so it can't leak into the next auction.
-    is_charity = query.data in ("start_charity_test", "start_charity_prod") \
-        or context.user_data.pop('is_charity', False)
+    # is_charity is now derived purely from callback_data — the single source of
+    # truth. user_data['is_charity'] is no longer consulted (and any stale value
+    # is defensively cleared).
+    is_charity = query.data in ("start_charity_test", "start_charity_prod")
+    context.user_data.pop('is_charity', None)
 
     if not photo_id:
         await query.edit_message_caption("❌ 數據丟失，請重新上架。")
@@ -958,7 +959,11 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "admin_charity_single":
         await query.answer()
-        context.user_data['is_charity'] = True
+        # 🔧 FIX: start_auction_action now derives is_charity purely from callback
+        # data, so no longer need to set user_data['is_charity']. But still wipe
+        # any stale auction fields from a previous session.
+        for key in ('auc_photo', 'auc_title', 'auc_price', 'auc_bin_price'):
+            context.user_data.pop(key, None)
         await query.message.reply_text("🎁 <b>福利拍賣</b>\n\n請發送圖片：", parse_mode=ParseMode.HTML)
         return WAITING_CHARITY_PHOTO
 

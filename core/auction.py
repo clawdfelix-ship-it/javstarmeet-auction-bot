@@ -84,6 +84,10 @@ def load_auction_state(state: AuctionState) -> bool:
             state.batch_abort = loaded.get("batch_abort", False)
             state.batch_target_group = loaded.get("batch_target_group")
             state.scheduled_start = loaded.get("scheduled_start")
+            # is_charity is intentionally NOT loaded from JSON — start_auction()
+            # is the single source of truth for this flag. If we restored True
+            # from a previous auction's state file, the next normal auction
+            # could be silently mis-categorised as charity.
             # Keep update_event cleared and timer_task = None (runtime objects)
             state.update_event.clear()
 
@@ -236,6 +240,7 @@ class AuctionEngine:
             self.state.highest_bidder = user_id
             self.state.highest_bidder_name = user_name
             self.state._ending = True
+            self.state.is_charity = False  # reset so JSON persistence doesn't leak charity
 
             if self.state.timer_task:
                 try:
@@ -284,6 +289,7 @@ class AuctionEngine:
         self.state.current_price = price
         self.state.highest_bidder = winner_id
         self.state.highest_bidder_name = winner_name
+        self.state.is_charity = False  # reset so JSON persistence doesn't leak charity
 
         save_auction_state(self.state)
 
