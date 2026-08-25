@@ -1564,104 +1564,15 @@ async def end_auction_buyout(bot, winner_id: int, winner_name: str, price: int):
         await start_next_queued_auction(bot)
 
 
-async def end_auction(bot):
-    """Delegate to AuctionEngine.end_auction() for state, then handle UI + orders."""
-    result = await auction_engine.end_auction(bot)
+async def _on_winner_resolved(
+    bot, winner_id, winner_name, price, title, is_charity
+):
+    """Callback invoked by AuctionEngine.end_auction() — handles orders,
+    winner DM, and batch / next-queue advancement.
 
-    winner_id = result["winner_id"]
-    winner_name = result["winner_name"]
-    price = result["price"]
-    sorted_bidders = result["sorted_bidders"]
-    state = auction_engine.state
-    title = state.title
-
-    # Sync engine state back to current_auction for display
-    auction_engine.state.active = state.active
-    auction_engine.state.current_price = state.current_price
-    auction_engine.state.highest_bidder = state.highest_bidder
-    auction_engine.state.highest_bidder_name = state.highest_bidder_name
-    auction_engine.state._ending = state._ending
-
-    # Build bidders list text
-    if sorted_bidders:
-        bidders_lines = "\n".join(
-            f"  {i+1}. {html.escape(b['name'])} — <b>${b['price']}</b>"
-            for i, b in enumerate(sorted_bidders)
-        )
-        bidders_text = f"\n📋 <b>投標記錄：</b>\n{bidders_lines}\n"
-    else:
-        bidders_text = "\n📋 沒有投標者"
-
-    # Charity auction: free winner notification
-    if state.is_charity:
-        if winner_id:
-            final_text = (
-                f"🎁 <b>福利拍賣結束！</b> 🎁\n\n"
-                f"📦 {html.escape(title)}\n"
-                f"🏆 得標者：{html.escape(winner_name)}\n"
-                f"💰 價格：<b>免費！</b>\n"
-                f"{bidders_text}\n"
-                f"請聯絡取貨。"
-            )
-        else:
-            final_text = (
-                f"🎁 <b>福利拍賣結束！</b> 🎁\n\n"
-                f"📦 {html.escape(title)}\n"
-                f"⚠️ 沒有足夠投標者，流標。\n"
-                f"{bidders_text}"
-            )
-    else:
-        final_text = (
-            f"🛑 <b>拍賣結束！</b> 🛑\n\n"
-            f"📦 {html.escape(title)}\n"
-            f"💰 最終成交價：<b>${price}</b>\n"
-            f"🏆 得標者：{html.escape(winner_name)}\n"
-            f"{bidders_text}\n"
-            f"系統將自動發送結算連結給得標者。"
-        )
-
-    # Retry once on 429 (rate limit) after 5s, then fall back to send_message
-    edit_ok = False
-    try:
-        await bot.edit_message_caption(
-            chat_id=auction_engine.state.chat_id,
-            message_id=auction_engine.state.message_id,
-            caption=final_text,
-            reply_markup=None,
-            parse_mode="HTML"
-        )
-        edit_ok = True
-    except telegram.error.TelegramError as e:
-        err_str = str(e)
-        logger.warning(f"Failed to edit auction message: {e}")
-        if "429" in err_str:
-            logger.info("Rate limited (429); waiting 5s before retry...")
-            await asyncio.sleep(5)
-            try:
-                await bot.edit_message_caption(
-                    chat_id=auction_engine.state.chat_id,
-                    message_id=auction_engine.state.message_id,
-                    caption=final_text,
-                    reply_markup=None,
-                    parse_mode="HTML"
-                )
-                edit_ok = True
-            except telegram.error.TelegramError as e2:
-                logger.error(f"Retry also failed: {e2}")
-    except Exception as e:
-        logger.warning(f"Unexpected error editing auction message: {e}")
-
-    # If edit failed (any reason), send as a new message so users always see results
-    if not edit_ok:
-        try:
-            await bot.send_message(
-                chat_id=auction_engine.state.chat_id,
-                text=final_text,
-                parse_mode="HTML"
-            )
-        except Exception as e2:
-            logger.error(f"Failed to send fallback message: {e2}")
-
+    NOTE: Public result message (edit_message_caption + fallback) is now
+    handled inside AuctionEngine.end_auction() so timer_loop also benefits.
+    """
     if winner_id:
         order = {
             "order_id": f"ORD-{int(datetime.now().timestamp())}",
@@ -1670,13 +1581,13 @@ async def end_auction(bot):
             "price": price,
             "time": datetime.now().isoformat(),
             "status": "pending",
-            "session_id": auction_engine.state.session_id
+            "session_id": auction_engine.state.session_id,
         }
         await store.add_order(order)
 
         try:
             user_info = await store.get_user(winner_id)
-            if state.is_charity:
+            if is_charity:
                 msg = (
                     f"🎁 恭喜您獲得福利獎品！\n\n"
                     f"商品：{html.escape(title)}\n"
@@ -1694,19 +1605,27 @@ async def end_auction(bot):
             await bot.send_message(chat_id=winner_id, text=msg, parse_mode="HTML")
         except telegram.error.TelegramError as e:
             logger.error(f"Failed to DM winner: {e}")
-            await bot.send_message(
-                chat_id=auction_engine.state.chat_id,
-                text=f"⚠️ 無法私聊得標者 (ID: {winner_id})，請主動聯繫管理員。"
-            )
-
-    # Reset ending flag
-    auction_engine.state._ending = False
+            try:
+                await bot.send_message(
+                    chat_id=auction_engine.state.chat_id,
+                    text=f"⚠️ 無法私聊得標者 (ID: {winner_id})，請主動聯繫管理員。",
+                )
+            except Exception:
+                logger.exception("Failed to notify group about DM failure")
 
     # Check if batch mode is active and auto-advance to next item
     if auction_engine.state.batch_mode and not auction_engine.state.batch_abort:
         _safe_create_task(run_batch_auction_loop(bot), "run_batch_loop")
     else:
         await start_next_queued_auction(bot)
+
+
+async def end_auction(bot):
+    """End the auction. UI + orders + DM all live inside AuctionEngine
+    via the registered _on_winner_resolved callback. This wrapper remains
+    so existing call sites continue to work.
+    """
+    await auction_engine.end_auction(bot)
 
 
 # BATCH AUCTION SYSTEM
@@ -2865,6 +2784,7 @@ async def main():
 
     # 初始化 AuctionEngine（逐漸接管 current_auction 全局 dict）
     auction_engine = AuctionEngine(store, ITEM_DURATION)
+    auction_engine.set_on_winner_resolved(_on_winner_resolved)
 
     # 啟動 Web Server (為了 Zeabur 保持活躍)
     await run_web_server()

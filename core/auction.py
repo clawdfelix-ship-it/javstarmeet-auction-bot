@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 # Countdown seconds that trigger a UI update
 UPDATE_POINTS = [60, 45, 30, 25, 20, 15, 10, 5, 4, 3, 2, 1]
 
+
+def _escape(text: str) -> str:
+    """HTML-escape a string for Telegram HTML parse mode."""
+    return html.escape(text) if text else text
+
 # --- Auction State Persistence ---
 
 AUCTION_STATE_FILE = "auction_state.json"
@@ -114,6 +119,17 @@ class AuctionEngine:
         self.state.update_event = asyncio.Event()
         self._lock = asyncio.Lock()
         self._item_duration = item_duration
+        # Callback for post-end side effects (orders, DM, batch advance).
+        # main.py registers this at startup to avoid circular import.
+        self._on_winner_resolved = None
+
+    def set_on_winner_resolved(self, callback) -> None:
+        """Register callback invoked after auction ends.
+
+        Callback signature: async def callback(bot, winner_id, winner_name,
+        price, title, is_charity) -> None
+        """
+        self._on_winner_resolved = callback
 
     # --- Auction Lifecycle ---
 
@@ -230,7 +246,11 @@ class AuctionEngine:
             save_auction_state(self.state)
 
     async def end_auction(self, bot) -> dict:
-        """End the auction. Returns dict with winner info."""
+        """End the auction. Computes winner, posts public result message,
+        and invokes the on_winner_resolved callback for orders + DM.
+
+        Returns dict with winner info.
+        """
         self.state._ending = True
 
         sorted_bidders = sorted(
@@ -266,6 +286,113 @@ class AuctionEngine:
         self.state.highest_bidder_name = winner_name
 
         save_auction_state(self.state)
+
+        # --- Post the public result message (previously only in main.py) ---
+        title = self.state.title
+        if sorted_bidders:
+            bidders_lines = "\n".join(
+                f"  {i+1}. {_escape(b['name'])} — <b>${b['price']}</b>"
+                for i, b in enumerate(sorted_bidders)
+            )
+            bidders_text = f"\n📋 <b>投標記錄：</b>\n{bidders_lines}\n"
+        else:
+            bidders_text = "\n📋 沒有投標者"
+
+        if self.state.is_charity:
+            if winner_id:
+                final_text = (
+                    f"🎁 <b>福利拍賣結束！</b> 🎁\n\n"
+                    f"📦 {_escape(title)}\n"
+                    f"🏆 得標者：{_escape(winner_name)}\n"
+                    f"💰 價格：<b>免費！</b>\n"
+                    f"{bidders_text}\n"
+                    f"請聯絡取貨。"
+                )
+            else:
+                final_text = (
+                    f"🎁 <b>福利拍賣結束！</b> 🎁\n\n"
+                    f"📦 {_escape(title)}\n"
+                    f"⚠️ 沒有足夠投標者，流標。\n"
+                    f"{bidders_text}"
+                )
+        else:
+            final_text = (
+                f"🛑 <b>拍賣結束！</b> 🛑\n\n"
+                f"📦 {_escape(title)}\n"
+                f"💰 最終成交價：<b>${price}</b>\n"
+                f"🏆 得標者：{_escape(winner_name)}\n"
+                f"{bidders_text}\n"
+                f"系統將自動發送結算連結給得標者。"
+            )
+
+        # Edit the auction message; fall back to send_message if edit fails
+        edit_ok = False
+        try:
+            import telegram.error as _tg_err
+            await bot.edit_message_caption(
+                chat_id=self.state.chat_id,
+                message_id=self.state.message_id,
+                caption=final_text,
+                reply_markup=None,
+                parse_mode="HTML",
+            )
+            edit_ok = True
+        except Exception as e:
+            err_str = str(e)
+            try:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    f"Failed to edit auction message: {e}"
+                )
+            except Exception:
+                pass
+            # Retry once on 429
+            if "429" in err_str:
+                try:
+                    await asyncio.sleep(5)
+                    await bot.edit_message_caption(
+                        chat_id=self.state.chat_id,
+                        message_id=self.state.message_id,
+                        caption=final_text,
+                        reply_markup=None,
+                        parse_mode="HTML",
+                    )
+                    edit_ok = True
+                except Exception:
+                    pass
+
+        if not edit_ok:
+            try:
+                await bot.send_message(
+                    chat_id=self.state.chat_id,
+                    text=final_text,
+                    parse_mode="HTML",
+                )
+            except Exception as e2:
+                try:
+                    import logging as _logging
+                    _logging.getLogger(__name__).error(
+                        f"Failed to send fallback message: {e2}"
+                    )
+                except Exception:
+                    pass
+
+        # --- Callback for orders + DM (set by main.py to avoid circular import) ---
+        if self._on_winner_resolved:
+            try:
+                await self._on_winner_resolved(
+                    bot=bot,
+                    winner_id=winner_id,
+                    winner_name=winner_name,
+                    price=price,
+                    title=title,
+                    is_charity=self.state.is_charity,
+                )
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).exception(
+                    "on_winner_resolved callback failed"
+                )
 
         self.state._ending = False
 
