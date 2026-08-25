@@ -1587,14 +1587,33 @@ async def end_auction(bot):
     else:
         bidders_text = "\n📋 沒有投標者"
 
-    final_text = (
-        f"🛑 <b>拍賣結束！</b> 🛑\n\n"
-        f"📦 {html.escape(title)}\n"
-        f"💰 最終成交價：<b>${price}</b>\n"
-        f"🏆 得標者：{html.escape(winner_name)}\n"
-        f"{bidders_text}\n"
-        f"系統將自動發送結算連結給得標者。"
-    )
+    # Charity auction: free winner notification
+    if state.is_charity:
+        if winner_id:
+            final_text = (
+                f"🎁 <b>福利拍賣結束！</b> 🎁\n\n"
+                f"📦 {html.escape(title)}\n"
+                f"🏆 得標者：{html.escape(winner_name)}\n"
+                f"💰 價格：<b>免費！</b>\n"
+                f"{bidders_text}\n"
+                f"請聯絡取貨。"
+            )
+        else:
+            final_text = (
+                f"🎁 <b>福利拍賣結束！</b> 🎁\n\n"
+                f"📦 {html.escape(title)}\n"
+                f"⚠️ 沒有足夠投標者，流標。\n"
+                f"{bidders_text}"
+            )
+    else:
+        final_text = (
+            f"🛑 <b>拍賣結束！</b> 🛑\n\n"
+            f"📦 {html.escape(title)}\n"
+            f"💰 最終成交價：<b>${price}</b>\n"
+            f"🏆 得標者：{html.escape(winner_name)}\n"
+            f"{bidders_text}\n"
+            f"系統將自動發送結算連結給得標者。"
+        )
 
     # Retry once on 429 (rate limit) after 5s
     edit_ok = False
