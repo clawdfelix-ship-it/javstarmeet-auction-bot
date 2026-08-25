@@ -79,6 +79,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     price = context.user_data.get('auc_price', 0)
     bin_price = context.user_data.get('auc_bin_price', 0)
     photo_id = context.user_data.get('auc_photo')
+    is_charity = context.user_data.get('is_charity', False)
 
     if not photo_id:
         await query.edit_message_caption("❌ 數據丟失，請重新上架。")
@@ -99,7 +100,7 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # Delegate state init to AuctionEngine
-    await auction_engine.start_auction(title, photo_id, price, bin_price, int(target_chat_id))
+    await auction_engine.start_auction(title, photo_id, price, bin_price, int(target_chat_id), is_charity=is_charity)
 
     # Sync engine state to current_auction for display/handlers
     state = auction_engine.state
