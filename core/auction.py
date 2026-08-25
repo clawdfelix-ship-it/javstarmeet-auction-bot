@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Countdown seconds that trigger a UI update
-UPDATE_POINTS = [25, 20, 15, 10, 5, 4, 3, 2, 1]
+UPDATE_POINTS = [60, 45, 30, 25, 20, 15, 10, 5, 4, 3, 2, 1]
 
 # --- Auction State Persistence ---
 
