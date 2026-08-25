@@ -297,9 +297,14 @@ class AuctionEngine:
                     logger.exception("Failed to end auction in timer loop")
                 break
 
+            # current_point = the largest UPDATE_POINTS threshold that
+            # remaining has just reached or passed. Iterate ascending so we
+            # pick the first (i.e., largest-from-below) point that is ≤ remaining.
+            # e.g. remaining=20 → 20 (just hit 20); remaining=19 → 15 (last hit);
+            # remaining=0.5 → 1 (last hit). This is "what threshold did we last cross?"
             current_point = None
-            for point in UPDATE_POINTS:
-                if remaining <= point:
+            for point in reversed(UPDATE_POINTS):  # ascending: [1,2,3,4,5,10,15,20,25,30,45,60]
+                if remaining >= point:
                     current_point = point
                     break
 
@@ -330,7 +335,7 @@ class AuctionEngine:
 
             if current_point is not None:
                 next_point = None
-                for point in UPDATE_POINTS:
+                for point in reversed(UPDATE_POINTS):
                     if point < current_point:
                         next_point = point
                         break
