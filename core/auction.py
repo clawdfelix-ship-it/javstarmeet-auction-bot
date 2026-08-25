@@ -169,6 +169,10 @@ class AuctionEngine:
             # cannot survive even if the caller passes False.
             self.state.is_charity = False
             self.state.is_charity = is_charity
+            logger.info(
+                f"start_auction: title={title!r} is_charity={is_charity} "
+                f"state.is_charity={self.state.is_charity}"
+            )
             self.state.session_id = session_id
             self.state.session_seq = session_seq
             self.state.chat_id = target_chat_id
@@ -262,6 +266,10 @@ class AuctionEngine:
         """
         self.state._ending = True
 
+        # Snapshot is_charity at the very start of end_auction so any later
+        # reset (e.g. JSON persistence cleanup) cannot flip the branch logic.
+        _is_charity = self.state.is_charity
+
         sorted_bidders = sorted(
             self.state.bidders, key=lambda x: (-x["price"], x.get("time", 0))
         )
@@ -269,11 +277,11 @@ class AuctionEngine:
         # DEBUG: trace is_charity at end-of-auction so we can diagnose leaks
         logger.info(
             f"end_auction: title={self.state.title!r} "
-            f"is_charity={self.state.is_charity} bidders={len(sorted_bidders)}"
+            f"is_charity={_is_charity} bidders={len(sorted_bidders)}"
         )
 
         # Charity auction: winner is the second-highest bidder, free of charge
-        if self.state.is_charity:
+        if _is_charity:
             if len(sorted_bidders) >= 2:
                 winner = sorted_bidders[1]  # Second highest bidder
                 winner_id = winner["id"]
@@ -314,7 +322,7 @@ class AuctionEngine:
         else:
             bidders_text = "\n📋 沒有投標者"
 
-        if self.state.is_charity:
+        if _is_charity:
             if winner_id:
                 final_text = (
                     f"🎁 <b>福利拍賣結束！</b> 🎁\n\n"
