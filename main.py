@@ -948,6 +948,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await new_auction_start(update, context)
         return
 
+    elif data == "admin_charity_single":
+        await query.answer()
+        context.user_data['is_charity'] = True
+        await query.message.reply_text("🎁 <b>福利拍賣</b>\n\n請發送圖片：", parse_mode=ParseMode.HTML)
+        return WAITING_CHARITY_PHOTO
+
     elif data == "admin_import_batch":
         # Show instructions for /import_batch
         await query.message.edit_text(
