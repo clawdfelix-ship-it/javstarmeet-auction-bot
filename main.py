@@ -1668,13 +1668,21 @@ async def end_auction(bot):
 
         try:
             user_info = await store.get_user(winner_id)
-            msg = (
-                f"🎉 恭喜您標得 <b>{html.escape(title)}</b>！\n\n"
-                f"金額：${price}\n"
-                f"交收：{html.escape(user_info.get('pickup', '未定'))}\n\n"
-                f"ℹ️ <b>付款安排</b>：\n"
-                f"拍賣結束後，我們會另外再發送付款連結到您的 Email，請留意查收。"
-            )
+            if state.is_charity:
+                msg = (
+                    f"🎁 恭喜您獲得福利獎品！\n\n"
+                    f"商品：{html.escape(title)}\n"
+                    f"交收：{html.escape(user_info.get('pickup', '旺角店自取'))}\n\n"
+                    f"請聯絡取貨。"
+                )
+            else:
+                msg = (
+                    f"🎉 恭喜您標得 <b>{html.escape(title)}</b>！\n\n"
+                    f"金額：${price}\n"
+                    f"交收：{html.escape(user_info.get('pickup', '未定'))}\n\n"
+                    f"ℹ️ <b>付款安排</b>：\n"
+                    f"拍賣結束後，我們會另外再發送付款連結到您的 Email，請留意查收。"
+                )
             await bot.send_message(chat_id=winner_id, text=msg, parse_mode="HTML")
         except telegram.error.TelegramError as e:
             logger.error(f"Failed to DM winner: {e}")
