@@ -164,6 +164,10 @@ class AuctionEngine:
             self.state.highest_bidder_name = "無"
             self.state.start_time = datetime.now()
             self.state.end_time = datetime.now().timestamp() + self._item_duration
+            # Defence in depth: always reset to False before applying the
+            # new flag, so a stale True from a previous charity auction
+            # cannot survive even if the caller passes False.
+            self.state.is_charity = False
             self.state.is_charity = is_charity
             self.state.session_id = session_id
             self.state.session_seq = session_seq
@@ -260,6 +264,12 @@ class AuctionEngine:
 
         sorted_bidders = sorted(
             self.state.bidders, key=lambda x: (-x["price"], x.get("time", 0))
+        )
+
+        # DEBUG: trace is_charity at end-of-auction so we can diagnose leaks
+        logger.info(
+            f"end_auction: title={self.state.title!r} "
+            f"is_charity={self.state.is_charity} bidders={len(sorted_bidders)}"
         )
 
         # Charity auction: winner is the second-highest bidder, free of charge
