@@ -1431,6 +1431,7 @@ async def start_auction_from_queue(bot, item):
     auction_engine.state.session_id = session_id
     auction_engine.state.session_seq = session_seq
     auction_engine.state.chat_id = target_chat_id
+    auction_engine.state.is_charity = False  # queued auctions are never charity
     if auction_engine.state.update_event:
         auction_engine.state.update_event.clear()
 
@@ -1728,6 +1729,7 @@ async def start_single_batch_item(bot, item):
     auction_engine.state.session_seq = state.session_seq
     auction_engine.state.chat_id = state.chat_id
     auction_engine.state._ending = state._ending
+    auction_engine.state.is_charity = state.is_charity
     if auction_engine.state.update_event:
         auction_engine.state.update_event.clear()
 
