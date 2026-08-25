@@ -319,7 +319,7 @@ async def handle_numpad_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         try:
             await context.bot.send_message(
                 chat_id=user.id,
-                text=f"✅ 成功出價：${price}！\n如有更高出價，您將收到通知。"
+                text=f"✅ 成功出價：${price}！\n出價已私密收下，拍賣結束後會公佈結果。"
             )
         except telegram.error.TelegramError as e:
             logger.warning(f"Failed to send numpad bid confirmation: {e}")
@@ -382,7 +382,7 @@ async def handle_private_bid_text(update: Update, context: ContextTypes.DEFAULT_
     await process_blind_bid(user, price, query=None, bot=context.bot)
     await update.message.reply_text(
         f"✅ 成功出價：${price}！\n"
-        f"出價已私密收下，如有更高出價您會收到通知！"
+        f"出價已私密收下，拍賣結束後會公佈結果。"
     )
     return ConversationHandler.END
 
@@ -1381,29 +1381,6 @@ async def process_blind_bid(user, price, query=None, bot=None):
     auction_engine.state.pending_bidder = state.pending_bidder
     auction_engine.state.pending_bidder_name = state.pending_bidder_name
     auction_engine.state.bidders = state.bidders
-
-async def notify_previous_bidder(bot, previous_bidder_id, title, new_price, new_bidder_name):
-    try:
-        target_bot = bot
-        if not target_bot:
-            return
-        
-        if target_bot:
-            notify_text = (
-                f"⚠️ <b>您的出價已被超越！</b>\n\n"
-                f"📦 商品：{html.escape(title)}\n"
-                f"💰 當前暗標價：<b>${new_price}</b>\n"
-                f"👑 最高出價者：{html.escape(new_bidder_name)}\n\n"
-                f"👇 立即私訊機器人反擊！"
-            )
-            
-            await target_bot.send_message(
-                chat_id=previous_bidder_id,
-                text=notify_text,
-                parse_mode=ParseMode.HTML
-            )
-    except telegram.error.TelegramError as e:
-        logger.warning(f"Failed to notify outbid user {previous_bidder_id}: {e}")
 
 async def start_next_queued_auction(bot):
     queue = await store.get_auction_queue()
@@ -2758,12 +2735,12 @@ async def handle_webapp_bid(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     # Call process_bid
     await process_blind_bid(user, price, query=None, bot=context.bot)
-    
+
     # Send confirmation message
     try:
         await context.bot.send_message(
             chat_id=user.id,
-            text=f"✅ 成功出價：${price}！\n如有更高出價，您將收到通知。"
+            text=f"✅ 成功出價：${price}！\n出價已私密收下，拍賣結束後會公佈結果。"
         )
     except telegram.error.TelegramError as e:
         logger.warning(f"Failed to send webapp bid confirmation: {e}")
