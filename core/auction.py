@@ -232,15 +232,28 @@ class AuctionEngine:
             self.state.bidders, key=lambda x: (-x["price"], x.get("time", 0))
         )
 
-        if sorted_bidders:
-            winner = sorted_bidders[0]
-            winner_id = winner["id"]
-            winner_name = winner["name"]
-            price = winner["price"]
+        # Charity auction: winner is the second-highest bidder, free of charge
+        if self.state.is_charity:
+            if len(sorted_bidders) >= 2:
+                winner = sorted_bidders[1]  # Second highest bidder
+                winner_id = winner["id"]
+                winner_name = winner["name"]
+                price = 0  # Free
+            else:
+                winner_id = None
+                winner_name = "無"
+                price = 0
         else:
-            winner_id = None
-            winner_name = "無"
-            price = 0
+            # Normal auction: highest bidder wins
+            if sorted_bidders:
+                winner = sorted_bidders[0]
+                winner_id = winner["id"]
+                winner_name = winner["name"]
+                price = winner["price"]
+            else:
+                winner_id = None
+                winner_name = "無"
+                price = 0
 
         self.state.active = False
         self.state.current_price = price
