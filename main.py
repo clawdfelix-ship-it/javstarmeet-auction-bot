@@ -2371,6 +2371,77 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ 廣播發送失敗：{e}")
 
 
+# --- Charity Auction Handlers ---
+
+async def _get_charity_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle charity auction photo upload."""
+    if update.message.photo:
+        photo_id = update.message.photo[-1].file_id
+        context.user_data['auc_photo'] = photo_id
+        await update.message.reply_text("收到圖片。請輸入福利品 <b>標題/描述</b>：", parse_mode=ParseMode.HTML)
+        return WAITING_CHARITY_TITLE
+    await update.message.reply_text("請發送圖片，唔係其他嘢。")
+    return WAITING_CHARITY_PHOTO
+
+
+async def _get_charity_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle charity auction title input."""
+    if update.message.text:
+        context.user_data['auc_title'] = update.message.text
+        await update.message.reply_text("請輸入 <b>起標價</b> (純數字)：", parse_mode=ParseMode.HTML)
+        return WAITING_CHARITY_PRICE
+    await update.message.reply_text("請輸入文字。")
+    return WAITING_CHARITY_TITLE
+
+
+async def _get_charity_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle charity auction price input."""
+    try:
+        price = int(update.message.text)
+        if price <= 0:
+            raise ValueError()
+        context.user_data['auc_price'] = price
+    except (ValueError, AttributeError):
+        await update.message.reply_text("❌ 請輸入有效數字：")
+        return WAITING_CHARITY_PRICE
+    await update.message.reply_text(
+        "請輸入 <b>一口價 (Buy It Now)</b> 金額 (純數字，輸入 0 代表不設)：",
+        parse_mode=ParseMode.HTML
+    )
+    return WAITING_CHARITY_BIN_PRICE
+
+
+async def _get_charity_bin_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle charity auction BIN price input and show preview."""
+    try:
+        bin_price = int(update.message.text)
+        if bin_price < 0:
+            raise ValueError()
+        context.user_data['auc_bin_price'] = bin_price
+    except (ValueError, AttributeError):
+        bin_price = 0
+        context.user_data['auc_bin_price'] = 0
+
+    photo_id = context.user_data.get('auc_photo')
+    title = context.user_data.get('auc_title', '?')
+    price = context.user_data.get('auc_price', 0)
+    safe_title = html.escape(title)
+    bin_text = f"\n⚡️ 一口價：${bin_price}" if bin_price > 0 else ""
+
+    keyboard = [
+        [InlineKeyboardButton("🚀 發布到【客戶群】", callback_data="start_charity_prod")],
+        [InlineKeyboardButton("🧪 發布到【測試群】", callback_data="start_charity_test")],
+        [InlineKeyboardButton("❌ 取消", callback_data="admin_cancel")],
+    ]
+    await update.message.reply_photo(
+        photo=photo_id,
+        caption=f"🎁 <b>福利拍賣品</b>\n\n📦 商品：{safe_title}\n💰 起標：${price}{bin_text}\n\n請選擇發布目標：",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return ConversationHandler.END
+
+
 # --- CSV Export & Blacklist ---
 
 async def export_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
