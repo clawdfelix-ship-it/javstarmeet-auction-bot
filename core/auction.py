@@ -178,6 +178,11 @@ class AuctionEngine:
                 "time": datetime.now().timestamp(),
             })
 
+            # Wake up timer_loop so it can refresh the message immediately
+            # (showing the new bidder count / countdown).
+            if self.state.update_event:
+                self.state.update_event.set()
+
             if self.state.bin_price > 0 and price >= self.state.bin_price:
                 self.state.end_time = datetime.now().timestamp()
                 if self.state.timer_task:
@@ -276,6 +281,7 @@ class AuctionEngine:
     async def timer_loop(self, bot) -> None:
         """Countdown loop - updates auction message at countdown points."""
         last_updated_point = None
+        last_bidder_count = 0
 
         while True:
             if not self.state.active:
@@ -297,9 +303,12 @@ class AuctionEngine:
                     current_point = point
                     break
 
+            current_bidder_count = len(self.state.bidders)
+            new_bid = current_bidder_count != last_bidder_count
+
             should_update = (
                 current_point is not None and last_updated_point != current_point
-            )
+            ) or new_bid
 
             if should_update:
                 try:
@@ -312,10 +321,12 @@ class AuctionEngine:
                         parse_mode="HTML",
                     )
                     last_updated_point = current_point
+                    last_bidder_count = current_bidder_count
                 except Exception as e:
                     if "message is not modified" not in str(e):
                         logger.warning(f"Update message failed: {e}")
                     last_updated_point = current_point
+                    last_bidder_count = current_bidder_count
 
             if current_point is not None:
                 next_point = None

@@ -1620,7 +1620,7 @@ async def end_auction(bot):
             f"系統將自動發送結算連結給得標者。"
         )
 
-    # Retry once on 429 (rate limit) after 5s
+    # Retry once on 429 (rate limit) after 5s, then fall back to send_message
     edit_ok = False
     try:
         await bot.edit_message_caption(
@@ -1648,15 +1648,19 @@ async def end_auction(bot):
                 edit_ok = True
             except telegram.error.TelegramError as e2:
                 logger.error(f"Retry also failed: {e2}")
-        if not edit_ok:
-            try:
-                await bot.send_message(
-                    chat_id=auction_engine.state.chat_id,
-                    text=final_text,
-                    parse_mode="HTML"
-                )
-            except telegram.error.TelegramError as e2:
-                logger.error(f"Failed to send fallback message: {e2}")
+    except Exception as e:
+        logger.warning(f"Unexpected error editing auction message: {e}")
+
+    # If edit failed (any reason), send as a new message so users always see results
+    if not edit_ok:
+        try:
+            await bot.send_message(
+                chat_id=auction_engine.state.chat_id,
+                text=final_text,
+                parse_mode="HTML"
+            )
+        except Exception as e2:
+            logger.error(f"Failed to send fallback message: {e2}")
 
     if winner_id:
         order = {
