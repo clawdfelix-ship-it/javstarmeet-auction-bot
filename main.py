@@ -2881,8 +2881,23 @@ async def main():
 
     application.add_handler(reg_handler)
     application.add_handler(auction_handler)
+
+    # Charity Auction Conversation Handler
+    charity_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_callback, pattern="^admin_charity_single$")],
+        states={
+            WAITING_CHARITY_PHOTO: [MessageHandler(filters.PHOTO, _get_charity_photo)],
+            WAITING_CHARITY_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_charity_title)],
+            WAITING_CHARITY_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_charity_price)],
+            WAITING_CHARITY_BIN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, _get_charity_bin_price)],
+        },
+        fallbacks=[CommandHandler("cancel", _cancel_admin)],
+    )
+    application.add_handler(charity_handler)
+
     application.add_handler(import_members_handler)
     application.add_handler(CallbackQueryHandler(start_auction_action, pattern="^start_auction_"))
+    application.add_handler(CallbackQueryHandler(start_auction_action, pattern="^start_charity_"))
     application.add_handler(CallbackQueryHandler(queue_auction_action, pattern="^queue_auction_"))
     application.add_handler(CallbackQueryHandler(handle_bin_callback, pattern="^bin_"))
     application.add_handler(CallbackQueryHandler(handle_bid_button, pattern="^bid_"))
