@@ -90,6 +90,10 @@ async def start_auction_action(update: Update, context: ContextTypes.DEFAULT_TYP
     if query.data in ("start_auction_test", "start_charity_test"):
         target_chat_id = await store.get_config("test_group_id")
         target_type = "測試"
+    elif query.data == "start_charity_prod":
+        target_chat_id = await store.get_config("prod_group_id")
+        if not target_chat_id:
+            target_chat_id = await store.get_config("group_id")
     else:
         target_chat_id = await store.get_config("prod_group_id")
         if not target_chat_id:
